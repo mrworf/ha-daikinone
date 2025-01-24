@@ -309,41 +309,48 @@ class DaikinOne:
         log.info(f"Cached {len(self.__thermostats)} thermostats")
 
     def __map_thermostat(self, payload: DaikinDeviceDataResponse) -> DaikinThermostat:
-        capabilities = set(DaikinThermostatCapability)
-        if payload.data.get("ctSystemCapHeat"):
-            capabilities.add(DaikinThermostatCapability.HEAT)
-        if payload.data.get("ctSystemCapCool"):
-            capabilities.add(DaikinThermostatCapability.COOL)
-        if payload.data.get("ctSystemCapEmergencyHeat"):
-            capabilities.add(DaikinThermostatCapability.EMERGENCY_HEAT)
+        try:
+            capabilities = set(DaikinThermostatCapability)
+            if payload.data.get("ctSystemCapHeat"):
+                capabilities.add(DaikinThermostatCapability.HEAT)
+            if payload.data.get("ctSystemCapCool"):
+                capabilities.add(DaikinThermostatCapability.COOL)
+            if payload.data.get("ctSystemCapEmergencyHeat"):
+                capabilities.add(DaikinThermostatCapability.EMERGENCY_HEAT)
 
-        thermostat = DaikinThermostat(
-            id=payload.id,
-            location_id=payload.locationId,
-            name=payload.name,
-            model=payload.model,
-            firmware_version=payload.firmware,
-            online=payload.online,
-            capabilities=capabilities,
-            mode=DaikinThermostatMode(payload.data["mode"]),
-            status=DaikinThermostatStatus(payload.data["equipmentStatus"]),
-            fan_mode=DaikinThermostatFanMode(payload.data["fanCirculate"]),
-            fan_speed=DaikinThermostatFanSpeed(payload.data["fanCirculateSpeed"]),
-            schedule=DaikinThermostatSchedule(enabled=payload.data["schedEnabled"]),
-            indoor_temperature=Temperature.from_celsius(payload.data["tempIndoor"]),
-            indoor_humidity=payload.data["humIndoor"],
-            set_point_heat=Temperature.from_celsius(payload.data["hspActive"]),
-            set_point_heat_min=Temperature.from_celsius(payload.data["EquipProtocolMinHeatSetpoint"]),
-            set_point_heat_max=Temperature.from_celsius(payload.data["EquipProtocolMaxHeatSetpoint"]),
-            set_point_cool=Temperature.from_celsius(payload.data["cspActive"]),
-            set_point_cool_min=Temperature.from_celsius(payload.data["EquipProtocolMinCoolSetpoint"]),
-            set_point_cool_max=Temperature.from_celsius(payload.data["EquipProtocolMaxCoolSetpoint"]),
-            outdoor_temperature=Temperature.from_celsius(payload.data["tempOutdoor"]),
-            outdoor_humidity=payload.data["humOutdoor"],
-            air_quality_outdoor=self.__map_air_quality_outdoor(payload),
-            air_quality_indoor=self.__map_air_quality_indoor(payload),
-            equipment=self.__map_equipment(payload),
-        )
+            thermostat = DaikinThermostat(
+                id=payload.id,
+                location_id=payload.locationId,
+                name=payload.name,
+                model=payload.model,
+                firmware_version=payload.firmware,
+                online=payload.online,
+                capabilities=capabilities,
+                mode=DaikinThermostatMode(payload.data.get("mode", DaikinThermostatMode.OFF)),
+                status=DaikinThermostatStatus(payload.data.get("equipmentStatus", DaikinThermostatStatus.IDLE)),
+                fan_mode=DaikinThermostatFanMode(payload.data["fanCirculate"]),
+                fan_speed=DaikinThermostatFanSpeed(payload.data["fanCirculateSpeed"]),
+                schedule=DaikinThermostatSchedule(enabled=payload.data["schedEnabled"]),
+                indoor_temperature=Temperature.from_celsius(payload.data["tempIndoor"]),
+                indoor_humidity=payload.data["humIndoor"],
+                set_point_heat=Temperature.from_celsius(payload.data["hspActive"]),
+                set_point_heat_min=Temperature.from_celsius(payload.data["EquipProtocolMinHeatSetpoint"]),
+                set_point_heat_max=Temperature.from_celsius(payload.data["EquipProtocolMaxHeatSetpoint"]),
+                set_point_cool=Temperature.from_celsius(payload.data["cspActive"]),
+                set_point_cool_min=Temperature.from_celsius(payload.data["EquipProtocolMinCoolSetpoint"]),
+                set_point_cool_max=Temperature.from_celsius(payload.data["EquipProtocolMaxCoolSetpoint"]),
+                outdoor_temperature=Temperature.from_celsius(payload.data["tempOutdoor"]),
+                outdoor_humidity=payload.data["humOutdoor"],
+                air_quality_outdoor=self.__map_air_quality_outdoor(payload),
+                air_quality_indoor=self.__map_air_quality_indoor(payload),
+                equipment=self.__map_equipment(payload),
+            )
+        except Exception as e:
+            # Improve logging when Daikin changes payload
+            log.exception('Failed to setup thermostat')
+            log.error(f'Contents of payload: {payload}')
+            raise e
+
 
         return thermostat
 
