@@ -328,19 +328,19 @@ class DaikinOne:
                 capabilities=capabilities,
                 mode=DaikinThermostatMode(payload.data.get("mode", DaikinThermostatMode.OFF)),
                 status=DaikinThermostatStatus(payload.data.get("equipmentStatus", DaikinThermostatStatus.IDLE)),
-                fan_mode=DaikinThermostatFanMode(payload.data["fanCirculate"]),
-                fan_speed=DaikinThermostatFanSpeed(payload.data["fanCirculateSpeed"]),
-                schedule=DaikinThermostatSchedule(enabled=payload.data["schedEnabled"]),
-                indoor_temperature=Temperature.from_celsius(payload.data["tempIndoor"]),
-                indoor_humidity=payload.data["humIndoor"],
-                set_point_heat=Temperature.from_celsius(payload.data["hspActive"]),
-                set_point_heat_min=Temperature.from_celsius(payload.data["EquipProtocolMinHeatSetpoint"]),
-                set_point_heat_max=Temperature.from_celsius(payload.data["EquipProtocolMaxHeatSetpoint"]),
-                set_point_cool=Temperature.from_celsius(payload.data["cspActive"]),
-                set_point_cool_min=Temperature.from_celsius(payload.data["EquipProtocolMinCoolSetpoint"]),
-                set_point_cool_max=Temperature.from_celsius(payload.data["EquipProtocolMaxCoolSetpoint"]),
-                outdoor_temperature=Temperature.from_celsius(payload.data["tempOutdoor"]),
-                outdoor_humidity=payload.data["humOutdoor"],
+                fan_mode=DaikinThermostatFanMode(payload.data.get("fanCirculate", DaikinThermostatFanMode.OFF)),
+                fan_speed=DaikinThermostatFanSpeed(payload.data.get("fanCirculateSpeed", DaikinThermostatFanSpeed.LOW)),
+                schedule=DaikinThermostatSchedule(enabled=payload.data.get("schedEnabled", False)),
+                indoor_temperature=Temperature.from_celsius(payload.data.get("tempIndoor", 0)),
+                indoor_humidity=payload.data.get("humIndoor", 0),
+                set_point_heat=Temperature.from_celsius(payload.data.get("hspActive", 0)),
+                set_point_heat_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 0)),
+                set_point_heat_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxHeatSetpoint", 0)),
+                set_point_cool=Temperature.from_celsius(payload.data.get("cspActive", 0)),
+                set_point_cool_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinCoolSetpoint", 0)),
+                set_point_cool_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxCoolSetpoint", 0)),
+                outdoor_temperature=Temperature.from_celsius(payload.data.get()"tempOutdoor", 0)),
+                outdoor_humidity=payload.data.get("humOutdoor", 0),
                 air_quality_outdoor=self.__map_air_quality_outdoor(payload),
                 air_quality_indoor=self.__map_air_quality_indoor(payload),
                 equipment=self.__map_equipment(payload),
@@ -355,7 +355,7 @@ class DaikinOne:
         return thermostat
 
     def __map_air_quality_outdoor(self, payload: DaikinDeviceDataResponse) -> DaikinOneAirQualitySensorOutdoor | None:
-        if not payload.data["aqOutdoorAvailable"]:
+        if 'aqOutdoorAvailable' not in payload.data:
             return None
 
         return DaikinOneAirQualitySensorOutdoor(
@@ -366,7 +366,7 @@ class DaikinOne:
         )
 
     def __map_air_quality_indoor(self, payload: DaikinDeviceDataResponse) -> DaikinOneAirQualitySensorIndoor | None:
-        if not payload.data["aqIndoorAvailable"]:
+        if 'aqIndoorAvailable' not in payload.data:
             return None
 
         return DaikinOneAirQualitySensorIndoor(
