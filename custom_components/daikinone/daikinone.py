@@ -339,7 +339,7 @@ class DaikinOne:
                 set_point_cool=Temperature.from_celsius(payload.data.get("cspActive", 0)),
                 set_point_cool_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinCoolSetpoint", 0)),
                 set_point_cool_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxCoolSetpoint", 0)),
-                outdoor_temperature=Temperature.from_celsius(payload.data.get()"tempOutdoor", 0)),
+                outdoor_temperature=Temperature.from_celsius(payload.data.get("tempOutdoor", 0)),
                 outdoor_humidity=payload.data.get("humOutdoor", 0),
                 air_quality_outdoor=self.__map_air_quality_outdoor(payload),
                 air_quality_indoor=self.__map_air_quality_indoor(payload),
