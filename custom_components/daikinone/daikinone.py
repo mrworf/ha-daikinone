@@ -156,6 +156,7 @@ class DaikinThermostatMode(Enum):
     COOL = 2
     AUTO = 3
     AUX_HEAT = 4
+    DRY = 5
 
 
 class DaikinThermostatStatus(Enum):
@@ -253,11 +254,20 @@ class DaikinOne:
 
     async def set_thermostat_mode(self, thermostat_id: str, mode: DaikinThermostatMode) -> None:
         """Set thermostat mode"""
-        await self.__req(
-            url=f"{DAIKIN_API_URL_DEVICE_DATA}/{thermostat_id}",
-            method="PUT",
-            body={"mode": mode.value},
-        )
+
+        # There's a difference, if we're turning off, we need to set specific values
+        if mode == DaikinThermostatMode.OFF:
+            await self.__req(
+                url=f"{DAIKIN_API_URL_DEVICE_DATA}/{thermostat_id}",
+                method="PUT",
+                body={"iduOperatingMode": 3, 'iduOnOff': False}, 
+            )
+        else:
+            await self.__req(
+                url=f"{DAIKIN_API_URL_DEVICE_DATA}/{thermostat_id}",
+                method="PUT",
+                body={"iduOperatingMode": mode.value, 'iduOnOff': True}, # old: mode
+            )
 
     async def set_thermostat_home_set_points(
         self,
@@ -272,9 +282,9 @@ class DaikinOne:
 
         payload: dict[str, Any] = {}
         if heat:
-            payload["hspHome"] = heat.celsius
+            payload["iduHeatSetpoint"] = heat.celsius # old: hspHome
         if cool:
-            payload["cspHome"] = cool.celsius
+            payload["iduCoolSetpoint"] = cool.celsius # old: cspHome
         if override_schedule:
             payload["schedOverride"] = 1
 
@@ -308,15 +318,21 @@ class DaikinOne:
 
         log.info(f"Cached {len(self.__thermostats)} thermostats")
 
-    def __map_thermostat(self, payload: DaikinDeviceDataResponse) -> DaikinThermostat:
+    def f(self, payload: DaikinDeviceDataResponse) -> DaikinThermostat:
         try:
             capabilities = set(DaikinThermostatCapability)
-            if payload.data.get("ctSystemCapHeat"):
+            if payload.data.get("ctSystemCapHeat") or payload.data.get('iduHeatSetpoint'):
                 capabilities.add(DaikinThermostatCapability.HEAT)
-            if payload.data.get("ctSystemCapCool"):
+            if payload.data.get("ctSystemCapCool") or payload.data.get('iduCoolSetpoint'):
                 capabilities.add(DaikinThermostatCapability.COOL)
             if payload.data.get("ctSystemCapEmergencyHeat"):
                 capabilities.add(DaikinThermostatCapability.EMERGENCY_HEAT)
+
+            # Fields beginning with 
+            # 'adpt' relate to the wifi adapter
+            # 'idu' relate to indoor unit (wall mounted head unit)
+            # 'odu' relate to outdoor unit (heatpump)
+            # 'shed' relate to scheduling functionality
 
             thermostat = DaikinThermostat(
                 id=payload.id,
@@ -326,20 +342,21 @@ class DaikinOne:
                 firmware_version=payload.firmware,
                 online=payload.online,
                 capabilities=capabilities,
-                mode=DaikinThermostatMode(payload.data.get("mode", DaikinThermostatMode.OFF)),
+                # Mode is special, since when the thermostat is OFF, it will show AUTO but iduOnOff is false
+                mode=DaikinThermostatMode(payload.data.get("iduOperatingMode", DaikinThermostatMode.OFF) if payload.data.get('iduOnOff', False) else DaikinThermostatMode.OFF), # old: mode
                 status=DaikinThermostatStatus(payload.data.get("equipmentStatus", DaikinThermostatStatus.IDLE)),
                 fan_mode=DaikinThermostatFanMode(payload.data.get("fanCirculate", DaikinThermostatFanMode.OFF)),
                 fan_speed=DaikinThermostatFanSpeed(payload.data.get("fanCirculateSpeed", DaikinThermostatFanSpeed.LOW)),
                 schedule=DaikinThermostatSchedule(enabled=payload.data.get("schedEnabled", False)),
-                indoor_temperature=Temperature.from_celsius(payload.data.get("tempIndoor", 0)),
+                indoor_temperature=Temperature.from_celsius(payload.data.get("iduRoomTemp", 0)), # old: tempIndoor
                 indoor_humidity=payload.data.get("humIndoor", 0),
-                set_point_heat=Temperature.from_celsius(payload.data.get("hspActive", 0)),
-                set_point_heat_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 0)),
-                set_point_heat_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxHeatSetpoint", 0)),
-                set_point_cool=Temperature.from_celsius(payload.data.get("cspActive", 0)),
-                set_point_cool_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinCoolSetpoint", 0)),
-                set_point_cool_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxCoolSetpoint", 0)),
-                outdoor_temperature=Temperature.from_celsius(payload.data.get("tempOutdoor", 0)),
+                set_point_heat=Temperature.from_celsius(payload.data.get("iduHeatSetpoint", 0)), # old: hspActive
+                set_point_heat_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 18)),
+                set_point_heat_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxHeatSetpoint", 30)),
+                set_point_cool=Temperature.from_celsius(payload.data.get("iduCoolSetpoint", 0)), # old:cspActive
+                set_point_cool_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinCoolSetpoint", 18)),
+                set_point_cool_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxCoolSetpoint", 30)),
+                outdoor_temperature=Temperature.from_celsius(payload.data.get("oduOutdoorTemp", 0)), # old: tempOutdoor
                 outdoor_humidity=payload.data.get("humOutdoor", 0),
                 air_quality_outdoor=self.__map_air_quality_outdoor(payload),
                 air_quality_indoor=self.__map_air_quality_indoor(payload),
