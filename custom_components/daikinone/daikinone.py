@@ -334,6 +334,20 @@ class DaikinOne:
             # 'odu' relate to outdoor unit (heatpump)
             # 'shed' relate to scheduling functionality
 
+            # Determine mode
+            status = DaikinThermostatStatus.IDLE
+            if payload.data.get('iduOnOff', False):
+                if payload.data.get('iduThermoState', False):
+                    # System is doing something (because power is on and thermostat is active)
+                    # Let's determine what exactly it's doing
+                    if payload.data.get('iduRoomTemp') < payload.data.get('iduHeatSetpoint', 0):
+                        status = DaikinThermostatStatus.HEATING
+                    elif payload.data.get('iduRoomTemp') > payload.data.get('iduCoolSetpoint', 255):
+                        status = DaikinThermostatStatus.COOLING
+                else:
+                    # Most likely just running the fan, don't know how to deal with dry mode
+                    status = DaikinThermostatStatus.CIRCULATING_AIR
+
             thermostat = DaikinThermostat(
                 id=payload.id,
                 location_id=payload.locationId,
@@ -344,7 +358,7 @@ class DaikinOne:
                 capabilities=capabilities,
                 # Mode is special, since when the thermostat is OFF, it will show AUTO but iduOnOff is false
                 mode=DaikinThermostatMode(payload.data.get("iduOperatingMode", DaikinThermostatMode.OFF) if payload.data.get('iduOnOff', False) else DaikinThermostatMode.OFF), # old: mode
-                status=DaikinThermostatStatus(payload.data.get("equipmentStatus", DaikinThermostatStatus.IDLE)),
+                status=status,
                 fan_mode=DaikinThermostatFanMode(payload.data.get("fanCirculate", DaikinThermostatFanMode.OFF)),
                 fan_speed=DaikinThermostatFanSpeed(payload.data.get("fanCirculateSpeed", DaikinThermostatFanSpeed.LOW)),
                 schedule=DaikinThermostatSchedule(enabled=payload.data.get("schedEnabled", False)),
