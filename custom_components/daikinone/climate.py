@@ -11,6 +11,7 @@ from homeassistant.components.climate.const import (
     HVACAction,
     ATTR_TARGET_TEMP_LOW,
     ATTR_TARGET_TEMP_HIGH,
+    ATTR_HVAC_MODE,
     FAN_OFF,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -194,6 +195,10 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         temperature = kwargs.get(ATTR_TEMPERATURE)
         target_temp_low = kwargs.get(ATTR_TARGET_TEMP_LOW)
         target_temp_high = kwargs.get(ATTR_TARGET_TEMP_HIGH)
+        hvac_mode = kwargs.get(ATTR_HVAC_MODE)
+
+        if hvac_mode:
+            await self.async_set_hvac_mode(hvac_mode) # type: ignore
 
         if target_temp_low or target_temp_high:
             heat = Temperature.from_celsius(target_temp_low) if target_temp_low is not None else None

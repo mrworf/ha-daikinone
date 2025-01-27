@@ -282,9 +282,9 @@ class DaikinOne:
 
         payload: dict[str, Any] = {}
         if heat:
-            payload["iduHeatSetpoint"] = heat.celsius # old: hspHome
+            payload["iduHeatSetpoint"] = round(heat.celsius) # old: hspHome
         if cool:
-            payload["iduCoolSetpoint"] = cool.celsius # old: cspHome
+            payload["iduCoolSetpoint"] = round(cool.celsius) # old: cspHome
         if override_schedule:
             payload["schedOverride"] = 1
 
@@ -344,9 +344,10 @@ class DaikinOne:
                         status = DaikinThermostatStatus.HEATING
                     elif payload.data.get('iduRoomTemp') > payload.data.get('iduCoolSetpoint', 255):
                         status = DaikinThermostatStatus.COOLING
-                else:
-                    # Most likely just running the fan, don't know how to deal with dry mode
+                elif payload.data.get('iduFanMotorCurrentRotationSpeed', 0) > 0:
+                    # Only if fan is spinning
                     status = DaikinThermostatStatus.CIRCULATING_AIR
+
 
             thermostat = DaikinThermostat(
                 id=payload.id,
@@ -365,10 +366,10 @@ class DaikinOne:
                 indoor_temperature=Temperature.from_celsius(payload.data.get("iduRoomTemp", 0)), # old: tempIndoor
                 indoor_humidity=payload.data.get("humIndoor", 0),
                 set_point_heat=Temperature.from_celsius(payload.data.get("iduHeatSetpoint", 0)), # old: hspActive
-                set_point_heat_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 18)),
+                set_point_heat_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 10)),
                 set_point_heat_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxHeatSetpoint", 30)),
                 set_point_cool=Temperature.from_celsius(payload.data.get("iduCoolSetpoint", 0)), # old:cspActive
-                set_point_cool_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinCoolSetpoint", 18)),
+                set_point_cool_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinCoolSetpoint", 10)),
                 set_point_cool_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxCoolSetpoint", 30)),
                 outdoor_temperature=Temperature.from_celsius(payload.data.get("oduOutdoorTemp", 0)), # old: tempOutdoor
                 outdoor_humidity=payload.data.get("humOutdoor", 0),
