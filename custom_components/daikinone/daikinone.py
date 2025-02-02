@@ -324,7 +324,7 @@ class DaikinOne:
 
         log.info(f"Cached {len(self.__thermostats)} thermostats")
 
-    def f(self, payload: DaikinDeviceDataResponse) -> DaikinThermostat:
+    def __map_thermostat(self, payload: DaikinDeviceDataResponse) -> DaikinThermostat:
         try:
             capabilities = set(DaikinThermostatCapability)
             if payload.data.get("ctSystemCapHeat") or payload.data.get('iduHeatSetpoint'):
