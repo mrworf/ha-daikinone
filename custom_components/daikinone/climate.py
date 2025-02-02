@@ -358,8 +358,8 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             case DaikinThermostatMode.AUTO:
                 # Since we internally calculate the auto setpoint, we could just return whatever
                 # heat/cool are set to, since they'll track anyway.
-                self._attr_target_temperature = self._device.set_point_heat.celsius
-                self._attr_target_temperature = self._device.set_point_cool.celsius
+                self._attr_target_temperature_low = self._device.set_point_heat.celsius
+                self._attr_target_temperature_high = self._device.set_point_cool.celsius
                 #self._attr_target_temperature_low = self._device.set_point_auto.celsius-1
                 #self._attr_target_temperature_high = self._device.set_point_auto.celsius+1
             case _:
@@ -376,6 +376,20 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             self._device.set_point_heat_max.celsius,
             self._device.set_point_cool_max.celsius,
         )
+
+        # Override these, since they now depend on the mode
+        match self._device.mode:
+            case DaikinThermostatMode.HEAT:
+                self._attr_min_temp = self._device.set_point_heat_min
+                self._attr_max_temp = self._device.set_point_heat_max
+            case DaikinThermostatMode.COOL:
+                self._attr_min_temp = self._device.set_point_cool_min
+                self._attr_max_temp = self._device.set_point_cool_max
+            case DaikinThermostatMode.AUTO:
+                self._attr_min_temp = self._device.set_point_auto_min
+                self._attr_max_temp = self._device.set_point_auto_max
+            case _:
+                pass
 
         # fan settings
         match self._device.fan_mode:

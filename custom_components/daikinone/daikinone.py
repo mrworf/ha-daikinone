@@ -390,10 +390,10 @@ class DaikinOne:
                 set_point_heat_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 10)),
                 set_point_heat_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxHeatSetpoint", 30)),
                 set_point_cool=Temperature.from_celsius(payload.data.get("iduCoolSetpoint", 0)), # old:cspActive
-                set_point_cool_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinCoolSetpoint", 10)),
-                set_point_cool_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxCoolSetpoint", 30)),
+                set_point_cool_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinCoolSetpoint", 18)),
+                set_point_cool_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxCoolSetpoint", 32)),
                 set_point_auto=Temperature.from_celsius(payload.data.get("iduAutoSetpoint", 0)), # old: hspActive
-                set_point_auto_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 10)),
+                set_point_auto_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 18)),
                 set_point_auto_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxHeatSetpoint", 30)),
 
                 outdoor_temperature=Temperature.from_celsius(payload.data.get("oduOutdoorTemp", 0)), # old: tempOutdoor
