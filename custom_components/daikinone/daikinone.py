@@ -277,19 +277,29 @@ class DaikinOne:
         thermostat_id: str,
         heat: Temperature | None = None,
         cool: Temperature | None = None,
-        auto: Temperature | None = None,
         override_schedule: bool = False,
     ) -> None:
         """Set thermostat home set points"""
         if not heat and not cool and not auto:
             raise ValueError("At least one of auto, heat or cool set points must be set")
 
+        # TODO: If in auto mode, we need to deal with this VERY DIFFERENTLY!
+
         payload: dict[str, Any] = {}
         if heat:
             payload["iduHeatSetpoint"] = round(heat.celsius) 
         if cool:
             payload["iduCoolSetpoint"] = round(cool.celsius) 
-        if cool:
+
+        # Always track this, but depending on what we're given, calculate the final temp
+        if heat and cool:
+            # Use the middle ground, since unit doesn't have cool/heat setpoints in auto mode
+            payload["iduAutoSetpoint"] = round((heat.celsius + cool.celsius)/2) 
+        elif heat:
+            # Set the heat
+            payload["iduAutoSetpoint"] = round(heat.celsius) 
+        elif cool:
+            # Set the cool
             payload["iduAutoSetpoint"] = round(cool.celsius) 
         if override_schedule:
             payload["schedOverride"] = 1
