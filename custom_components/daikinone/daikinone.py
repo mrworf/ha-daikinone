@@ -158,7 +158,6 @@ class DaikinThermostatMode(Enum):
     AUX_HEAT = 4
     DRY = 5
 
-
 class DaikinThermostatStatus(Enum):
     COOLING = 1
     DRYING = 2
@@ -277,11 +276,11 @@ class DaikinOne:
         thermostat_id: str,
         heat: Temperature | None = None,
         cool: Temperature | None = None,
-        override_schedule: bool = False,
+       override_schedule: bool = False,
     ) -> None:
         """Set thermostat home set points"""
-        if not heat and not cool and not auto:
-            raise ValueError("At least one of auto, heat or cool set points must be set")
+        if not heat and not cool:
+            raise ValueError("At least one of heat or cool set points must be set")
 
         # TODO: If in auto mode, we need to deal with this VERY DIFFERENTLY!
 
@@ -291,16 +290,6 @@ class DaikinOne:
         if cool:
             payload["iduCoolSetpoint"] = round(cool.celsius) 
 
-        # Always track this, but depending on what we're given, calculate the final temp
-        if heat and cool:
-            # Use the middle ground, since unit doesn't have cool/heat setpoints in auto mode
-            payload["iduAutoSetpoint"] = round((heat.celsius + cool.celsius)/2) 
-        elif heat:
-            # Set the heat
-            payload["iduAutoSetpoint"] = round(heat.celsius) 
-        elif cool:
-            # Set the cool
-            payload["iduAutoSetpoint"] = round(cool.celsius) 
         if override_schedule:
             payload["schedOverride"] = 1
 
@@ -369,7 +358,6 @@ class DaikinOne:
                     else:
                         status = DaikinThermostatStatus.CIRCULATING_AIR
 
-
             thermostat = DaikinThermostat(
                 id=payload.id,
                 location_id=payload.locationId,
@@ -379,7 +367,7 @@ class DaikinOne:
                 online=payload.online,
                 capabilities=capabilities,
                 # Mode is special, since when the thermostat is OFF, it will show AUTO but iduOnOff is false
-                mode=DaikinThermostatMode(payload.data.get("iduOperatingMode", DaikinThermostatMode.OFF) if payload.data.get('iduOnOff', False) else DaikinThermostatMode.OFF), # old: mode
+                mode=DaikinThermostatMode(payload.data.get("iduOperatingMode", DaikinThermostatMode.OFF) if payload.data.get('iduOnOff', False) else DaikinThermostatMode.OFF),
                 status=status,
                 fan_mode=DaikinThermostatFanMode(payload.data.get("fanCirculate", DaikinThermostatFanMode.OFF)),
                 fan_speed=DaikinThermostatFanSpeed(payload.data.get("fanCirculateSpeed", DaikinThermostatFanSpeed.LOW)),
