@@ -93,7 +93,7 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             ClimateEntityFeature.TURN_ON
             | ClimateEntityFeature.TURN_OFF
             | ClimateEntityFeature.TARGET_TEMPERATURE
-            | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
+#            | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
             | ClimateEntityFeature.FAN_MODE
         )
         self._attr_hvac_modes = self.get_hvac_modes()
@@ -123,7 +123,7 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             DaikinThermostatCapability.HEAT in self._device.capabilities
             and DaikinThermostatCapability.COOL in self._device.capabilities
         ):
-            modes.append(HVACMode.HEAT_COOL)
+            modes.append(HVACMode.AUTO)
 
         if DaikinThermostatCapability.HEAT in self._device.capabilities:
             modes.append(HVACMode.HEAT)
@@ -138,7 +138,7 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         """Set new target hvac mode."""
         target_mode: DaikinThermostatMode
         match hvac_mode:
-            case HVACMode.HEAT_COOL:
+            case HVACMode.AUTO:
                 target_mode = DaikinThermostatMode.AUTO
             case HVACMode.HEAT:
                 target_mode = DaikinThermostatMode.HEAT
@@ -264,6 +264,22 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
                         check=lambda t: t.set_point_cool == temperature,
                     )
 
+                case DaikinThermostatMode.AUTO:
+                    log.debug("Setting thermostat set point: auto=%s ", temperature)
+
+                    # update set points optimistically
+                    def update(t: DaikinThermostat):
+                        t.set_point_auto = temperature
+
+                    await self.update_state_optimistically(
+                        operation=lambda: self._data.daikin.set_thermostat_home_set_points(
+                            self._device.id,
+                            auto=temperature,
+                        ),
+                        optimistic_update=update,
+                        check=lambda t: t.set_point_auto == temperature,
+                    )
+
                 case _:
                     raise ValueError("Invalid thermostat mode and set temperature combination")
         else:
@@ -303,7 +319,7 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         self._attr_preset_mode = DaikinOneThermostatPresetMode.NONE.value
         match self._device.mode:
             case DaikinThermostatMode.AUTO:
-                self._attr_hvac_mode = HVACMode.HEAT_COOL
+                self._attr_hvac_mode = HVACMode.AUTO
             case DaikinThermostatMode.HEAT:
                 self._attr_hvac_mode = HVACMode.HEAT
             case DaikinThermostatMode.COOL:

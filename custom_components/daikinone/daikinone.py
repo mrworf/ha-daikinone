@@ -202,6 +202,9 @@ class DaikinThermostat(DaikinDevice):
     set_point_cool: Temperature
     set_point_cool_min: Temperature
     set_point_cool_max: Temperature
+    set_point_auto: Temperature
+    set_point_auto_min: Temperature
+    set_point_auto_max: Temperature
     outdoor_temperature: Temperature
     outdoor_humidity: int
     air_quality_outdoor: DaikinOneAirQualitySensorOutdoor | None
@@ -274,17 +277,20 @@ class DaikinOne:
         thermostat_id: str,
         heat: Temperature | None = None,
         cool: Temperature | None = None,
+        auto: Temperature | None = None,
         override_schedule: bool = False,
     ) -> None:
         """Set thermostat home set points"""
-        if not heat and not cool:
-            raise ValueError("At least one of heat or cool set points must be set")
+        if not heat and not cool and not auto:
+            raise ValueError("At least one of auto, heat or cool set points must be set")
 
         payload: dict[str, Any] = {}
         if heat:
-            payload["iduHeatSetpoint"] = round(heat.celsius) # old: hspHome
+            payload["iduHeatSetpoint"] = round(heat.celsius) 
         if cool:
-            payload["iduCoolSetpoint"] = round(cool.celsius) # old: cspHome
+            payload["iduCoolSetpoint"] = round(cool.celsius) 
+        if cool:
+            payload["iduAutoSetpoint"] = round(cool.celsius) 
         if override_schedule:
             payload["schedOverride"] = 1
 
@@ -340,13 +346,18 @@ class DaikinOne:
                 if payload.data.get('iduThermoState', False):
                     # System is doing something (because power is on and thermostat is active)
                     # Let's determine what exactly it's doing
-                    if payload.data.get('iduRoomTemp') < payload.data.get('iduHeatSetpoint', 0):
-                        status = DaikinThermostatStatus.HEATING
-                    elif payload.data.get('iduRoomTemp') > payload.data.get('iduCoolSetpoint', 255):
-                        status = DaikinThermostatStatus.COOLING
+                    if payload.data.get('iduFanMotorCurrentRotationSpeed', 0) > 0:
+                        if payload.data.get('iduHeatPumpCycleMode', 0) == 0:
+                            status = DaikinThermostatStatus.CIRCULATING_AIR
+                        elif payload.data.get('iduHeatPumpCycleMode', 0) == 1:
+                            status = DaikinThermostatStatus.HEATING
+                        elif payload.data.get('iduHeatPumpCycleMode', 0) == 2:
+                            status = DaikinThermostatStatus.COOLING
                 elif payload.data.get('iduFanMotorCurrentRotationSpeed', 0) > 0:
-                    # Only if fan is spinning
-                    status = DaikinThermostatStatus.CIRCULATING_AIR
+                    if payload.data.get('iduHeatPumpCycleMode', 0) == 2:
+                        status = DaikinThermostatStatus.CIRCULATING_AIR # DRYING # Drying has not thermostat properties
+                    else:
+                        status = DaikinThermostatStatus.CIRCULATING_AIR
 
 
             thermostat = DaikinThermostat(
@@ -371,6 +382,10 @@ class DaikinOne:
                 set_point_cool=Temperature.from_celsius(payload.data.get("iduCoolSetpoint", 0)), # old:cspActive
                 set_point_cool_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinCoolSetpoint", 10)),
                 set_point_cool_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxCoolSetpoint", 30)),
+                set_point_auto=Temperature.from_celsius(payload.data.get("iduAutoSetpoint", 0)), # old: hspActive
+                set_point_auto_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 10)),
+                set_point_auto_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxHeatSetpoint", 30)),
+
                 outdoor_temperature=Temperature.from_celsius(payload.data.get("oduOutdoorTemp", 0)), # old: tempOutdoor
                 outdoor_humidity=payload.data.get("humOutdoor", 0),
                 air_quality_outdoor=self.__map_air_quality_outdoor(payload),
