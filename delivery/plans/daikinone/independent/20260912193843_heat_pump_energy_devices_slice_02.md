@@ -61,3 +61,10 @@ registry cleanup where needed, translations, README, and focused tests.
 
 Commit the Options flow, recovery behavior, documentation, tests, and this slice
 plan together after all available validation passes.
+
+## Validation evidence
+
+- `python -m pytest -q`: 14 passed.
+- `ruff check .`: passed.
+- `pyright`: passed with zero errors or warnings.
+- Python bytecode compilation, translation JSON parsing, and `git diff --check`: passed.

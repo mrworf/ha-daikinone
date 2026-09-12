@@ -23,7 +23,22 @@ A custom component for Home Assistant to integrate with Daikin One+ smart HVAC s
 - All HVAC modes supported by the Daikin One+ system, including Emergency Heat
 - Intelligent handling of thermostat updates for ultra-fast response times
 - Sensors for status, temperatures, airflow, demand, etc. for all connected equipment
+- Automatically discovered outdoor heat-pump devices with instantaneous power and cumulative energy sensors
 - Outdoor and indoor air quality sensors (if reported by your system)
+
+### Mini-split heat-pump grouping and energy
+
+For multi-head mini-split systems, Daikin reports outdoor-unit telemetry through each connected indoor head but does
+not expose an outdoor-unit serial number. The integration compares the reported outdoor telemetry once, creates a
+stable heat-pump grouping, and then stores that grouping so changing readings cannot move entities between devices.
+
+Each discovered heat pump exposes **Power** in watts and **Energy consumption** in kWh. The energy value is an
+estimated cumulative counter reported by Daikin and can be selected as an electricity source in Home Assistant's
+Energy dashboard.
+
+If automatic discovery is uncertain, the affected heads remain fully functional and Home Assistant raises a repair
+notice. Open the Daikin One integration's **Configure** dialog to add, rename, remove, or correct heat-pump groups.
+Each indoor head can belong to only one heat pump.
 
 <!-- markdownlint-disable-next-line no-inline-html -->
 <img src="docs/dashboard.png" width="350" alt="dashboard example">

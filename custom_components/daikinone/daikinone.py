@@ -425,10 +425,17 @@ class DaikinOne:
         self.creds = creds
         self.__thermostats: dict[str, DaikinThermostat] = {}
         self.__heat_pumps: dict[str, DaikinHeatPump] = {}
-        self.__heat_pump_groups = (
-            None if heat_pump_groups is None else [DaikinHeatPumpGroup.from_dict(group) for group in heat_pump_groups]
-        )
+        try:
+            self.__heat_pump_groups = (
+                None
+                if heat_pump_groups is None
+                else [DaikinHeatPumpGroup.from_dict(group) for group in heat_pump_groups]
+            )
+        except (KeyError, TypeError, ValueError):
+            log.warning("Ignoring invalid persisted heat-pump groups", exc_info=True)
+            self.__heat_pump_groups = None
         self.__heat_pump_groups_inferred = False
+        self.__outdoor_telemetry: dict[str, _DaikinOutdoorTelemetry] = {}
 
     async def get_all_raw_device_data(self) -> list[dict[str, Any]]:
         """Get raw device data"""
@@ -455,6 +462,23 @@ class DaikinOne:
 
     def get_heat_pump_groups(self) -> list[dict[str, Any]]:
         return [group.as_dict() for group in self.__heat_pump_groups or []]
+
+    def get_heat_pump_candidate_ids(self) -> set[str]:
+        return set(self.__outdoor_telemetry)
+
+    def get_unassigned_heat_pump_thermostat_ids(self) -> set[str]:
+        assigned = {
+            thermostat_id
+            for group in self.__heat_pump_groups or []
+            for thermostat_id in group.thermostat_ids
+        }
+        return self.get_heat_pump_candidate_ids() - assigned
+
+    def select_heat_pump_energy_source(self, thermostat_ids: set[str]) -> str:
+        candidates = [self.__outdoor_telemetry[item] for item in thermostat_ids if item in self.__outdoor_telemetry]
+        if not candidates:
+            raise ValueError("Heat-pump group has no supported head units")
+        return max(candidates, key=lambda item: item.energy_consumption).thermostat_id
 
     @property
     def heat_pump_groups_inferred(self) -> bool:
@@ -531,12 +555,12 @@ class DaikinOne:
             self.__heat_pump_groups = discover_heat_pump_groups(devices)
             self.__heat_pump_groups_inferred = True
 
-        telemetry = {
+        self.__outdoor_telemetry = {
             mapped.thermostat_id: mapped
             for device in devices
             if (mapped := _map_outdoor_telemetry(device)) is not None
         }
-        self.__heat_pumps = self.__map_heat_pumps(telemetry)
+        self.__heat_pumps = self.__map_heat_pumps(self.__outdoor_telemetry)
 
         log.info(f"Cached {len(self.__thermostats)} thermostats and {len(self.__heat_pumps)} heat pumps")
 

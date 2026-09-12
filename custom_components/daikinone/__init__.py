@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.issue_registry import IssueSeverity
 from homeassistant.util import Throttle
 
 from custom_components.daikinone.const import (
@@ -40,6 +42,34 @@ class DaikinOneData:
         await self.daikin.update()
 
 
+async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload when heat-pump grouping options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _update_heat_pump_grouping_issue(hass: HomeAssistant, entry: ConfigEntry, data: DaikinOneData) -> None:
+    """Keep one actionable issue in sync with unresolved supported heads."""
+    unassigned_ids = data.daikin.get_unassigned_heat_pump_thermostat_ids()
+    issue_id = f"{entry.entry_id}_heat_pump_grouping"
+    if not unassigned_ids:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+
+    thermostat_names = sorted(
+        thermostat.name for thermostat in data.daikin.get_thermostats().values() if thermostat.id in unassigned_ids
+    )
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        is_persistent=True,
+        severity=IssueSeverity.WARNING,
+        translation_key="heat_pump_grouping",
+        translation_placeholders={"heads": ", ".join(thermostat_names)},
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the given config entry"""
 
@@ -70,6 +100,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             },
         )
     hass.data[DOMAIN] = data
+
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
+    _update_heat_pump_grouping_issue(hass, entry, data)
 
     # load platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

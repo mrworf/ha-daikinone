@@ -319,6 +319,9 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
                 self._attr_preset_mode = DaikinOneThermostatPresetMode.EMERGENCY_HEAT.value
             case DaikinThermostatMode.OFF:
                 self._attr_hvac_mode = HVACMode.OFF
+            case DaikinThermostatMode.DRY:
+                # DRY is not currently advertised as a supported Home Assistant mode.
+                pass
 
         # hvac current action
         match self._device.status:

@@ -21,8 +21,8 @@ controls remain unchanged.
 
 ## Slice index
 
-1. [Automatic heat-pump devices and energy sensors](20260912193843_heat_pump_energy_devices_slice_01.md)
-2. [Grouping correction, ambiguity recovery, and documentation](20260912193843_heat_pump_energy_devices_slice_02.md)
+1. [Automatic heat-pump devices and energy sensors](20260912193843_heat_pump_energy_devices_slice_01.md) — completed in `d0559ba`
+2. [Grouping correction, ambiguity recovery, and documentation](20260912193843_heat_pump_energy_devices_slice_02.md) — completed
 
 ## Completion criteria
 
@@ -31,3 +31,8 @@ controls remain unchanged.
 - Grouping persists across refreshes and restarts and can be corrected by the
   user without changing existing head entity IDs.
 - Focused tests, Ruff, and Pyright pass, subject to recorded environment limits.
+
+## Delivery result
+
+Both slices are implemented. The final suite contains 14 passing tests; Ruff,
+Pyright, bytecode compilation, translation JSON validation, and diff checks pass.

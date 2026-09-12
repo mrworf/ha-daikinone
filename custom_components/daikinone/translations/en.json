@@ -14,6 +14,46 @@
       "auth_failed": "Authentication failed, please check your credentials and try again. Check the logs for more info."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manage heat pumps",
+        "menu_options": {
+          "edit_group": "Edit a heat pump",
+          "add_group": "Add a heat pump",
+          "finish": "Save changes"
+        }
+      },
+      "edit_group": {
+        "title": "Select a heat pump",
+        "data": {
+          "group_id": "Heat pump"
+        }
+      },
+      "group": {
+        "title": "Configure heat pump",
+        "description": "Assign each indoor head to at most one outdoor heat pump.",
+        "data": {
+          "name": "Name",
+          "members": "Connected indoor heads",
+          "delete_group": "Delete this heat pump"
+        }
+      }
+    },
+    "error": {
+      "empty_name": "Enter a name.",
+      "empty_members": "Select at least one indoor head.",
+      "unknown_head": "One or more selected heads are no longer available.",
+      "different_locations": "All selected heads must be in the same Daikin location.",
+      "duplicate_head": "An indoor head can belong to only one heat pump."
+    }
+  },
+  "issues": {
+    "heat_pump_grouping": {
+      "title": "Some Daikin heads are not assigned to a heat pump",
+      "description": "The integration could not confidently determine the outdoor heat pump for: {heads}. Open the Daikin One integration options to assign these heads. Existing head controls continue to work normally."
+    }
+  },
   "entity": {
     "climate": {
       "daikinone_thermostat": {
