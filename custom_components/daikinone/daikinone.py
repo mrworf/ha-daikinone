@@ -3,8 +3,10 @@ import json
 import logging
 from datetime import timedelta
 from enum import Enum, auto
+from statistics import median
 from urllib.parse import urljoin
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 import aiohttp
 from aiohttp import ClientError
@@ -209,6 +211,61 @@ class DaikinThermostat(DaikinDevice):
     air_quality_outdoor: DaikinOneAirQualitySensorOutdoor | None
     air_quality_indoor: DaikinOneAirQualitySensorIndoor | None
     equipment: dict[str, DaikinEquipment]
+    heat_pump_id: str | None = None
+
+
+@dataclass(frozen=True)
+class DaikinHeatPumpGroup:
+    id: str
+    name: str
+    location_id: str
+    thermostat_ids: tuple[str, ...]
+    energy_source_id: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "location_id": self.location_id,
+            "thermostat_ids": list(self.thermostat_ids),
+            "energy_source_id": self.energy_source_id,
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "DaikinHeatPumpGroup":
+        thermostat_ids = tuple(str(item) for item in value["thermostat_ids"])
+        return cls(
+            id=str(value["id"]),
+            name=str(value["name"]),
+            location_id=str(value["location_id"]),
+            thermostat_ids=thermostat_ids,
+            energy_source_id=str(value["energy_source_id"]),
+        )
+
+
+@dataclass
+class DaikinHeatPump(DaikinDevice):
+    location_id: str
+    thermostat_ids: tuple[str, ...]
+    energy_source_id: str
+    power_usage: float | None
+    energy_consumption: float | None
+
+
+@dataclass(frozen=True)
+class _DaikinOutdoorTelemetry:
+    thermostat_id: str
+    location_id: str
+    online: bool
+    connected_indoor_units: int
+    power_usage: float
+    energy_consumption: float
+    mode: int | str
+    outdoor_temperature: float
+    compressor_frequency: float | None
+    fan_speed: float | None
+    discharge_temperature: float | None
+    target_discharge_temperature: float | None
 
 
 class DaikinDeviceDataResponse(BaseModel):
@@ -219,6 +276,132 @@ class DaikinDeviceDataResponse(BaseModel):
     firmware: str
     online: bool
     data: dict[str, Any]
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _map_outdoor_telemetry(payload: DaikinDeviceDataResponse) -> _DaikinOutdoorTelemetry | None:
+    """Map mini-split outdoor telemetry, excluding legacy communicating equipment."""
+    if "ctOutdoorUnitType" in payload.data:
+        return None
+
+    connected = _number(payload.data.get("oduConnectedIduUnitNumber"))
+    power = _number(payload.data.get("oduConsumedPower"))
+    energy = _number(payload.data.get("oduIntPowerConsumption"))
+    outdoor_temperature = _number(payload.data.get("oduOutdoorTemp"))
+    mode = payload.data.get("oduOperatingMode")
+    if (
+        connected is None
+        or connected < 1
+        or power is None
+        or power < 0
+        or energy is None
+        or energy < 0
+        or outdoor_temperature is None
+        or not isinstance(mode, (int, str))
+        or isinstance(mode, bool)
+    ):
+        return None
+
+    return _DaikinOutdoorTelemetry(
+        thermostat_id=payload.id,
+        location_id=payload.locationId,
+        online=payload.online,
+        connected_indoor_units=int(connected),
+        power_usage=power,
+        energy_consumption=energy,
+        mode=mode,
+        outdoor_temperature=outdoor_temperature,
+        compressor_frequency=_number(payload.data.get("oduCompCurrentFrequency")),
+        fan_speed=_number(payload.data.get("oduFanMotorCurrentSpeed")),
+        discharge_temperature=_number(payload.data.get("oduCompDischargeTemp")),
+        target_discharge_temperature=_number(payload.data.get("oduCompTargetDischargeTemp")),
+    )
+
+
+def _outdoor_telemetry_compatible(left: _DaikinOutdoorTelemetry, right: _DaikinOutdoorTelemetry) -> bool:
+    if left.location_id != right.location_id or left.connected_indoor_units != right.connected_indoor_units:
+        return False
+
+    energy_tolerance = max(25.0, max(left.energy_consumption, right.energy_consumption) * 0.05)
+    if abs(left.energy_consumption - right.energy_consumption) > energy_tolerance:
+        return False
+    if left.mode != right.mode or abs(left.outdoor_temperature - right.outdoor_temperature) > 2.0:
+        return False
+
+    signals = (
+        (left.compressor_frequency, right.compressor_frequency, 5.0),
+        (left.fan_speed, right.fan_speed, 100.0),
+        (left.discharge_temperature, right.discharge_temperature, 5.0),
+        (left.target_discharge_temperature, right.target_discharge_temperature, 2.0),
+    )
+    matches = sum(
+        1
+        for left_value, right_value, tolerance in signals
+        if left_value is not None and right_value is not None and abs(left_value - right_value) <= tolerance
+    )
+    return matches >= 2
+
+
+def discover_heat_pump_groups(payloads: list[DaikinDeviceDataResponse]) -> list[DaikinHeatPumpGroup]:
+    """Discover conservative, stable initial groupings from a single API snapshot."""
+    telemetry = [
+        mapped
+        for payload in payloads
+        if (mapped := _map_outdoor_telemetry(payload)) is not None and mapped.online
+    ]
+    partitions: dict[tuple[str, int], list[_DaikinOutdoorTelemetry]] = {}
+    for item in telemetry:
+        partitions.setdefault((item.location_id, item.connected_indoor_units), []).append(item)
+
+    components: list[tuple[list[_DaikinOutdoorTelemetry], int]] = []
+    for candidates in partitions.values():
+        remaining = {candidate.thermostat_id: candidate for candidate in candidates}
+        while remaining:
+            _, seed = remaining.popitem()
+            component = [seed]
+            changed = True
+            while changed:
+                changed = False
+                for thermostat_id, candidate in list(remaining.items()):
+                    if any(_outdoor_telemetry_compatible(candidate, member) for member in component):
+                        component.append(remaining.pop(thermostat_id))
+                        changed = True
+            components.append((component, len(candidates)))
+
+    groups: list[DaikinHeatPumpGroup] = []
+    for component, partition_size in components:
+        if len(component) == 1 and partition_size > 1 and component[0].connected_indoor_units > 1:
+            continue
+        member_ids = tuple(sorted(item.thermostat_id for item in component))
+        location_id = component[0].location_id
+        group_seed = f"daikinone:{location_id}:{','.join(member_ids)}"
+        energy_source = max(component, key=lambda item: item.energy_consumption).thermostat_id
+        groups.append(
+            DaikinHeatPumpGroup(
+                id=f"heat-pump-{uuid5(NAMESPACE_URL, group_seed)}",
+                name="",
+                location_id=location_id,
+                thermostat_ids=member_ids,
+                energy_source_id=energy_source,
+            )
+        )
+
+    groups.sort(key=lambda group: min(group.thermostat_ids))
+    return [
+        DaikinHeatPumpGroup(
+            id=group.id,
+            name=f"Heat Pump {index}",
+            location_id=group.location_id,
+            thermostat_ids=group.thermostat_ids,
+            energy_source_id=group.energy_source_id,
+        )
+        for index, group in enumerate(groups, start=1)
+    ]
 
 
 class DaikinOne:
@@ -234,8 +417,18 @@ class DaikinOne:
 
     __thermostats: dict[str, DaikinThermostat] = dict()
 
-    def __init__(self, creds: DaikinUserCredentials):
+    def __init__(
+        self,
+        creds: DaikinUserCredentials,
+        heat_pump_groups: list[dict[str, Any]] | None = None,
+    ):
         self.creds = creds
+        self.__thermostats: dict[str, DaikinThermostat] = {}
+        self.__heat_pumps: dict[str, DaikinHeatPump] = {}
+        self.__heat_pump_groups = (
+            None if heat_pump_groups is None else [DaikinHeatPumpGroup.from_dict(group) for group in heat_pump_groups]
+        )
+        self.__heat_pump_groups_inferred = False
 
     async def get_all_raw_device_data(self) -> list[dict[str, Any]]:
         """Get raw device data"""
@@ -253,6 +446,19 @@ class DaikinOne:
 
     def get_thermostats(self) -> dict[str, DaikinThermostat]:
         return copy.deepcopy(self.__thermostats)
+
+    def get_heat_pump(self, heat_pump_id: str) -> DaikinHeatPump:
+        return copy.deepcopy(self.__heat_pumps[heat_pump_id])
+
+    def get_heat_pumps(self) -> dict[str, DaikinHeatPump]:
+        return copy.deepcopy(self.__heat_pumps)
+
+    def get_heat_pump_groups(self) -> list[dict[str, Any]]:
+        return [group.as_dict() for group in self.__heat_pump_groups or []]
+
+    @property
+    def heat_pump_groups_inferred(self) -> bool:
+        return self.__heat_pump_groups_inferred
 
     async def set_thermostat_mode(self, thermostat_id: str, mode: DaikinThermostatMode) -> None:
         """Set thermostat mode"""
@@ -321,7 +527,48 @@ class DaikinOne:
 
         self.__thermostats = {device.id: self.__map_thermostat(device) for device in devices}
 
-        log.info(f"Cached {len(self.__thermostats)} thermostats")
+        if self.__heat_pump_groups is None:
+            self.__heat_pump_groups = discover_heat_pump_groups(devices)
+            self.__heat_pump_groups_inferred = True
+
+        telemetry = {
+            mapped.thermostat_id: mapped
+            for device in devices
+            if (mapped := _map_outdoor_telemetry(device)) is not None
+        }
+        self.__heat_pumps = self.__map_heat_pumps(telemetry)
+
+        log.info(f"Cached {len(self.__thermostats)} thermostats and {len(self.__heat_pumps)} heat pumps")
+
+    def __map_heat_pumps(self, telemetry: dict[str, _DaikinOutdoorTelemetry]) -> dict[str, DaikinHeatPump]:
+        heat_pumps: dict[str, DaikinHeatPump] = {}
+        for group in self.__heat_pump_groups or []:
+            members = [telemetry[member_id] for member_id in group.thermostat_ids if member_id in telemetry]
+            if not members:
+                continue
+
+            online_members = [member for member in members if member.online]
+            power_usage = median(member.power_usage for member in online_members) if online_members else None
+            energy_source = telemetry.get(group.energy_source_id)
+            energy_consumption = (
+                energy_source.energy_consumption if energy_source is not None and energy_source.online else None
+            )
+            heat_pumps[group.id] = DaikinHeatPump(
+                id=group.id,
+                name=group.name,
+                model="Mini-split Heat Pump",
+                firmware_version="",
+                location_id=group.location_id,
+                thermostat_ids=group.thermostat_ids,
+                energy_source_id=group.energy_source_id,
+                power_usage=power_usage,
+                energy_consumption=energy_consumption,
+            )
+            for member_id in group.thermostat_ids:
+                if member_id in self.__thermostats:
+                    self.__thermostats[member_id].heat_pump_id = group.id
+
+        return heat_pumps
 
     def __map_thermostat(self, payload: DaikinDeviceDataResponse) -> DaikinThermostat:
         try:

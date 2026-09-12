@@ -6,6 +6,7 @@ from homeassistant.components.sensor.const import SensorDeviceClass, SensorState
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     EntityCategory,
+    UnitOfEnergy,
     UnitOfTemperature,
     PERCENTAGE,
     UnitOfPower,
@@ -29,6 +30,7 @@ from custom_components.daikinone.daikinone import (
     DaikinThermostat,
     DaikinIndoorUnit,
     DaikinEquipment,
+    DaikinHeatPump,
     DaikinOutdoorUnit,
 )
 
@@ -45,6 +47,38 @@ async def async_setup_entry(
     thermostats = data.daikin.get_thermostats().values()
 
     entities: list[SensorEntity] = []
+    for heat_pump in data.daikin.get_heat_pumps().values():
+        entities += [
+            DaikinOneHeatPumpSensor(
+                description=SensorEntityDescription(
+                    key="power_usage",
+                    name="Power",
+                    has_entity_name=True,
+                    state_class=SensorStateClass.MEASUREMENT,
+                    device_class=SensorDeviceClass.POWER,
+                    native_unit_of_measurement=UnitOfPower.WATT,
+                    icon="mdi:meter-electric",
+                ),
+                data=data,
+                device=heat_pump,
+                attribute=lambda heat_pump: heat_pump.power_usage,
+            ),
+            DaikinOneHeatPumpSensor(
+                description=SensorEntityDescription(
+                    key="energy_consumption",
+                    name="Energy Consumption",
+                    has_entity_name=True,
+                    state_class=SensorStateClass.TOTAL_INCREASING,
+                    device_class=SensorDeviceClass.ENERGY,
+                    native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+                    icon="mdi:meter-electric",
+                ),
+                data=data,
+                device=heat_pump,
+                attribute=lambda heat_pump: heat_pump.energy_consumption,
+            ),
+        ]
+
     for thermostat in thermostats:
         # thermostat sensors
 
@@ -890,6 +924,26 @@ class DaikinOneThermostatSensor(DaikinOneSensor[DaikinThermostat]):
 
     def update_entity_attributes(self) -> None:
         self._attr_native_value = self._attribute(self._device)
+
+
+class DaikinOneHeatPumpSensor(DaikinOneSensor[DaikinHeatPump]):
+    def __init__(
+        self,
+        description: SensorEntityDescription,
+        data: DaikinOneData,
+        device: DaikinHeatPump,
+        attribute: Callable[[DaikinHeatPump], StateType],
+    ) -> None:
+        super().__init__(description, data, device, attribute)
+        self._attr_unique_id = f"{self._device.id}-{self.entity_description.key}"
+        self.update_entity_attributes()
+
+    async def async_get_device(self) -> DaikinHeatPump:
+        return self._data.daikin.get_heat_pump(self._device.id)
+
+    def update_entity_attributes(self) -> None:
+        self._attr_native_value = self._attribute(self._device)
+        self._attr_available = self._attr_native_value is not None
 
 
 class DaikinOneEquipmentSensor[E: DaikinEquipment](DaikinOneSensor[E]):

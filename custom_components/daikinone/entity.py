@@ -7,13 +7,12 @@ from homeassistant.helpers.entity import Entity
 
 from custom_components.daikinone import DaikinOneData
 from custom_components.daikinone.const import DOMAIN, MANUFACTURER
-from custom_components.daikinone.daikinone import DaikinDevice, DaikinEquipment, DaikinThermostat
+from custom_components.daikinone.daikinone import DaikinDevice, DaikinEquipment, DaikinHeatPump, DaikinThermostat
 
 log = logging.getLogger(__name__)
 
 
 class DaikinOneEntity[D: DaikinDevice](Entity):
-
     _device: D
     _data: DaikinOneData
 
@@ -44,6 +43,8 @@ class DaikinOneEntity[D: DaikinDevice](Entity):
     def device_name(self) -> str:
         """Return the name of the device."""
         match self._device:
+            case DaikinHeatPump():
+                return self._device.name
             case DaikinThermostat():
                 return f"{self._device.name} Thermostat"
             case DaikinEquipment():
@@ -56,6 +57,8 @@ class DaikinOneEntity[D: DaikinDevice](Entity):
     def device_parent(self) -> str | None:
         """Return the name of the device."""
         match self._device:
+            case DaikinThermostat() if self._device.heat_pump_id is not None:
+                return self._device.heat_pump_id
             case DaikinEquipment():
                 thermostat = self._data.daikin.get_thermostat(self._device.thermostat_id)
                 return thermostat.id

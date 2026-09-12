@@ -7,7 +7,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import Throttle
 
 from custom_components.daikinone.const import (
+    CONF_OPTION_HEAT_PUMP_GROUPS_KEY,
+    CONF_OPTION_HEAT_PUMP_GROUPS_SCHEMA_VERSION_KEY,
     CONF_OPTION_ENTITY_UID_SCHEMA_VERSION_KEY,
+    HEAT_PUMP_GROUPS_SCHEMA_VERSION,
     PLATFORMS,
     DOMAIN,
     MIN_TIME_BETWEEN_UPDATES,
@@ -42,11 +45,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     log.info(f"Setting up Daikin One integration for {entry.data[CONF_EMAIL]}")
 
+    configured_groups = None
+    if entry.options.get(CONF_OPTION_HEAT_PUMP_GROUPS_SCHEMA_VERSION_KEY) == HEAT_PUMP_GROUPS_SCHEMA_VERSION:
+        configured_groups = entry.options.get(CONF_OPTION_HEAT_PUMP_GROUPS_KEY, [])
+
     # create daikin one connector
     data = DaikinOneData(
-        hass, entry, DaikinOne(DaikinUserCredentials(entry.data[CONF_EMAIL], entry.data[CONF_PASSWORD]))
+        hass,
+        entry,
+        DaikinOne(
+            DaikinUserCredentials(entry.data[CONF_EMAIL], entry.data[CONF_PASSWORD]),
+            heat_pump_groups=configured_groups,
+        ),
     )
     await data.update()
+
+    if data.daikin.heat_pump_groups_inferred:
+        hass.config_entries.async_update_entry(
+            entry,
+            options={
+                **entry.options,
+                CONF_OPTION_HEAT_PUMP_GROUPS_SCHEMA_VERSION_KEY: HEAT_PUMP_GROUPS_SCHEMA_VERSION,
+                CONF_OPTION_HEAT_PUMP_GROUPS_KEY: data.daikin.get_heat_pump_groups(),
+            },
+        )
     hass.data[DOMAIN] = data
 
     # load platforms
