@@ -160,6 +160,7 @@ class DaikinThermostatMode(Enum):
     AUX_HEAT = 4
     DRY = 5
 
+
 class DaikinThermostatStatus(Enum):
     COOLING = 1
     DRYING = 2
@@ -350,9 +351,7 @@ def _outdoor_telemetry_compatible(left: _DaikinOutdoorTelemetry, right: _DaikinO
 def discover_heat_pump_groups(payloads: list[DaikinDeviceDataResponse]) -> list[DaikinHeatPumpGroup]:
     """Discover conservative, stable initial groupings from a single API snapshot."""
     telemetry = [
-        mapped
-        for payload in payloads
-        if (mapped := _map_outdoor_telemetry(payload)) is not None and mapped.online
+        mapped for payload in payloads if (mapped := _map_outdoor_telemetry(payload)) is not None and mapped.online
     ]
     partitions: dict[tuple[str, int], list[_DaikinOutdoorTelemetry]] = {}
     for item in telemetry:
@@ -467,11 +466,7 @@ class DaikinOne:
         return set(self.__outdoor_telemetry)
 
     def get_unassigned_heat_pump_thermostat_ids(self) -> set[str]:
-        assigned = {
-            thermostat_id
-            for group in self.__heat_pump_groups or []
-            for thermostat_id in group.thermostat_ids
-        }
+        assigned = {thermostat_id for group in self.__heat_pump_groups or [] for thermostat_id in group.thermostat_ids}
         return self.get_heat_pump_candidate_ids() - assigned
 
     def select_heat_pump_energy_source(self, thermostat_ids: set[str]) -> str:
@@ -492,13 +487,13 @@ class DaikinOne:
             await self.__req(
                 url=f"{DAIKIN_API_URL_DEVICE_DATA}/{thermostat_id}",
                 method="PUT",
-                body={"iduOperatingMode": 3, 'iduOnOff': False}, 
+                body={"iduOperatingMode": 3, "iduOnOff": False},
             )
         else:
             await self.__req(
                 url=f"{DAIKIN_API_URL_DEVICE_DATA}/{thermostat_id}",
                 method="PUT",
-                body={"iduOperatingMode": mode.value, 'iduOnOff': True}, # old: mode
+                body={"iduOperatingMode": mode.value, "iduOnOff": True},  # old: mode
             )
 
     async def set_thermostat_home_set_points(
@@ -506,19 +501,20 @@ class DaikinOne:
         thermostat_id: str,
         heat: Temperature | None = None,
         cool: Temperature | None = None,
-       override_schedule: bool = False,
+        auto: Temperature | None = None,
+        override_schedule: bool = False,
     ) -> None:
         """Set thermostat home set points"""
-        if not heat and not cool:
-            raise ValueError("At least one of heat or cool set points must be set")
-
-        # TODO: If in auto mode, we need to deal with this VERY DIFFERENTLY!
+        if heat is None and cool is None and auto is None:
+            raise ValueError("At least one of heat, cool or auto set points must be set")
 
         payload: dict[str, Any] = {}
-        if heat:
-            payload["iduHeatSetpoint"] = round(heat.celsius) 
-        if cool:
-            payload["iduCoolSetpoint"] = round(cool.celsius) 
+        if heat is not None:
+            payload["iduHeatSetpoint"] = round(heat.celsius)
+        if cool is not None:
+            payload["iduCoolSetpoint"] = round(cool.celsius)
+        if auto is not None:
+            payload["iduAutoSetpoint"] = round(auto.celsius)
 
         if override_schedule:
             payload["schedOverride"] = 1
@@ -556,9 +552,7 @@ class DaikinOne:
             self.__heat_pump_groups_inferred = True
 
         self.__outdoor_telemetry = {
-            mapped.thermostat_id: mapped
-            for device in devices
-            if (mapped := _map_outdoor_telemetry(device)) is not None
+            mapped.thermostat_id: mapped for device in devices if (mapped := _map_outdoor_telemetry(device)) is not None
         }
         self.__heat_pumps = self.__map_heat_pumps(self.__outdoor_telemetry)
 
@@ -597,14 +591,14 @@ class DaikinOne:
     def __map_thermostat(self, payload: DaikinDeviceDataResponse) -> DaikinThermostat:
         try:
             capabilities = set(DaikinThermostatCapability)
-            if payload.data.get("ctSystemCapHeat") or payload.data.get('iduHeatSetpoint'):
+            if payload.data.get("ctSystemCapHeat") or payload.data.get("iduHeatSetpoint"):
                 capabilities.add(DaikinThermostatCapability.HEAT)
-            if payload.data.get("ctSystemCapCool") or payload.data.get('iduCoolSetpoint'):
+            if payload.data.get("ctSystemCapCool") or payload.data.get("iduCoolSetpoint"):
                 capabilities.add(DaikinThermostatCapability.COOL)
             if payload.data.get("ctSystemCapEmergencyHeat"):
                 capabilities.add(DaikinThermostatCapability.EMERGENCY_HEAT)
 
-            # Fields beginning with 
+            # Fields beginning with
             # 'adpt' relate to the wifi adapter
             # 'idu' relate to indoor unit (wall mounted head unit)
             # 'odu' relate to outdoor unit (heatpump)
@@ -612,20 +606,20 @@ class DaikinOne:
 
             # Determine mode
             status = DaikinThermostatStatus.IDLE
-            if payload.data.get('iduOnOff', False):
-                if payload.data.get('iduThermoState', False):
+            if payload.data.get("iduOnOff", False):
+                if payload.data.get("iduThermoState", False):
                     # System is doing something (because power is on and thermostat is active)
                     # Let's determine what exactly it's doing
-                    if payload.data.get('iduFanMotorCurrentRotationSpeed', 0) > 0:
-                        if payload.data.get('iduHeatPumpCycleMode', 0) == 0:
+                    if payload.data.get("iduFanMotorCurrentRotationSpeed", 0) > 0:
+                        if payload.data.get("iduHeatPumpCycleMode", 0) == 0:
                             status = DaikinThermostatStatus.CIRCULATING_AIR
-                        elif payload.data.get('iduHeatPumpCycleMode', 0) == 1:
+                        elif payload.data.get("iduHeatPumpCycleMode", 0) == 1:
                             status = DaikinThermostatStatus.HEATING
-                        elif payload.data.get('iduHeatPumpCycleMode', 0) == 2:
+                        elif payload.data.get("iduHeatPumpCycleMode", 0) == 2:
                             status = DaikinThermostatStatus.COOLING
-                elif payload.data.get('iduFanMotorCurrentRotationSpeed', 0) > 0:
-                    if payload.data.get('iduHeatPumpCycleMode', 0) == 2:
-                        status = DaikinThermostatStatus.CIRCULATING_AIR # DRYING # Drying has not thermostat properties
+                elif payload.data.get("iduFanMotorCurrentRotationSpeed", 0) > 0:
+                    if payload.data.get("iduHeatPumpCycleMode", 0) == 2:
+                        status = DaikinThermostatStatus.CIRCULATING_AIR  # DRYING # Drying has not thermostat properties
                     else:
                         status = DaikinThermostatStatus.CIRCULATING_AIR
 
@@ -638,24 +632,27 @@ class DaikinOne:
                 online=payload.online,
                 capabilities=capabilities,
                 # Mode is special, since when the thermostat is OFF, it will show AUTO but iduOnOff is false
-                mode=DaikinThermostatMode(payload.data.get("iduOperatingMode", DaikinThermostatMode.OFF) if payload.data.get('iduOnOff', False) else DaikinThermostatMode.OFF),
+                mode=DaikinThermostatMode(
+                    payload.data.get("iduOperatingMode", DaikinThermostatMode.OFF)
+                    if payload.data.get("iduOnOff", False)
+                    else DaikinThermostatMode.OFF
+                ),
                 status=status,
                 fan_mode=DaikinThermostatFanMode(payload.data.get("fanCirculate", DaikinThermostatFanMode.OFF)),
                 fan_speed=DaikinThermostatFanSpeed(payload.data.get("fanCirculateSpeed", DaikinThermostatFanSpeed.LOW)),
                 schedule=DaikinThermostatSchedule(enabled=payload.data.get("schedEnabled", False)),
-                indoor_temperature=Temperature.from_celsius(payload.data.get("iduRoomTemp", 0)), # old: tempIndoor
+                indoor_temperature=Temperature.from_celsius(payload.data.get("iduRoomTemp", 0)),  # old: tempIndoor
                 indoor_humidity=payload.data.get("humIndoor", 0),
-                set_point_heat=Temperature.from_celsius(payload.data.get("iduHeatSetpoint", 0)), # old: hspActive
+                set_point_heat=Temperature.from_celsius(payload.data.get("iduHeatSetpoint", 0)),  # old: hspActive
                 set_point_heat_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 10)),
                 set_point_heat_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxHeatSetpoint", 30)),
-                set_point_cool=Temperature.from_celsius(payload.data.get("iduCoolSetpoint", 0)), # old:cspActive
+                set_point_cool=Temperature.from_celsius(payload.data.get("iduCoolSetpoint", 0)),  # old:cspActive
                 set_point_cool_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinCoolSetpoint", 18)),
                 set_point_cool_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxCoolSetpoint", 32)),
-                set_point_auto=Temperature.from_celsius(payload.data.get("iduAutoSetpoint", 0)), # old: hspActive
+                set_point_auto=Temperature.from_celsius(payload.data.get("iduAutoSetpoint", 0)),  # old: hspActive
                 set_point_auto_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 18)),
                 set_point_auto_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxHeatSetpoint", 30)),
-
-                outdoor_temperature=Temperature.from_celsius(payload.data.get("oduOutdoorTemp", 0)), # old: tempOutdoor
+                outdoor_temperature=Temperature.from_celsius(payload.data.get("oduOutdoorTemp", 0)),  # old: tempOutdoor
                 outdoor_humidity=payload.data.get("humOutdoor", 0),
                 air_quality_outdoor=self.__map_air_quality_outdoor(payload),
                 air_quality_indoor=self.__map_air_quality_indoor(payload),
@@ -663,15 +660,14 @@ class DaikinOne:
             )
         except Exception as e:
             # Improve logging when Daikin changes payload
-            log.exception('Failed to setup thermostat')
-            log.error(f'Contents of payload: {payload}')
+            log.exception("Failed to setup thermostat")
+            log.error(f"Contents of payload: {payload}")
             raise e
-
 
         return thermostat
 
     def __map_air_quality_outdoor(self, payload: DaikinDeviceDataResponse) -> DaikinOneAirQualitySensorOutdoor | None:
-        if 'aqOutdoorAvailable' not in payload.data:
+        if "aqOutdoorAvailable" not in payload.data:
             return None
 
         return DaikinOneAirQualitySensorOutdoor(
@@ -682,7 +678,7 @@ class DaikinOne:
         )
 
     def __map_air_quality_indoor(self, payload: DaikinDeviceDataResponse) -> DaikinOneAirQualitySensorIndoor | None:
-        if 'aqIndoorAvailable' not in payload.data:
+        if "aqIndoorAvailable" not in payload.data:
             return None
 
         return DaikinOneAirQualitySensorIndoor(
@@ -698,7 +694,7 @@ class DaikinOne:
         equipment: dict[str, DaikinEquipment] = {}
 
         # air handler
-        if 'ctAHUnitType' in payload.data and payload.data["ctAHUnitType"] < 255:
+        if "ctAHUnitType" in payload.data and payload.data["ctAHUnitType"] < 255:
             model = payload.data["ctAHModelNoCharacter1_15"].strip()
             serial = payload.data["ctAHSerialNoCharacter1_15"].strip()
             eid = f"{model}-{serial}"
@@ -725,7 +721,7 @@ class DaikinOne:
             )
 
         # furnace
-        if 'ctIFCUnitType' in payload.data and payload.data["ctIFCUnitType"] < 255:
+        if "ctIFCUnitType" in payload.data and payload.data["ctIFCUnitType"] < 255:
             model = payload.data["ctIFCModelNoCharacter1_15"].strip()
             serial = payload.data["ctIFCSerialNoCharacter1_15"].strip()
             eid = f"{model}-{serial}"
@@ -752,14 +748,14 @@ class DaikinOne:
             )
 
         # outdoor unit
-        if 'ctOutdoorUnitType' in payload.data and payload.data["ctOutdoorUnitType"] < 255:
+        if "ctOutdoorUnitType" in payload.data and payload.data["ctOutdoorUnitType"] < 255:
             model = payload.data["ctOutdoorModelNoCharacter1_15"].strip()
             serial = payload.data["ctOutdoorSerialNoCharacter1_15"].strip()
             eid = f"{model}-{serial}"
 
             # assume it can cool, and if it can also heat it should be a heat pump
             name = "Condensing Unit"
-            if payload.data.get("ctOutdoorHeatMaxRPS",0) != 0 and payload.data.get("ctOutdoorHeatMaxRPS",0) != 65535:
+            if payload.data.get("ctOutdoorHeatMaxRPS", 0) != 0 and payload.data.get("ctOutdoorHeatMaxRPS", 0) != 65535:
                 name = "Heat Pump"
 
             equipment[eid] = DaikinOutdoorUnit(
@@ -802,7 +798,7 @@ class DaikinOne:
             )
 
         # eev coil
-        if 'ctCoilUnitType' in payload.data and payload.data["ctCoilUnitType"] < 255:
+        if "ctCoilUnitType" in payload.data and payload.data["ctCoilUnitType"] < 255:
             model = "EEV Coil"
             serial = payload.data["ctCoilSerialNoCharacter1_15"].strip()
             eid = f"eevcoil-{serial}"
