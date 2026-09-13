@@ -212,6 +212,7 @@ class DaikinThermostat(DaikinDevice):
     air_quality_outdoor: DaikinOneAirQualitySensorOutdoor | None
     air_quality_indoor: DaikinOneAirQualitySensorIndoor | None
     equipment: dict[str, DaikinEquipment]
+    indoor_temperature_valid: bool = True
     heat_pump_id: str | None = None
 
 
@@ -495,6 +496,8 @@ class DaikinOne:
                 method="PUT",
                 body={"iduOperatingMode": mode.value, "iduOnOff": True},  # old: mode
             )
+        if thermostat_id in self.__thermostats:
+            self.__thermostats[thermostat_id].mode = mode
 
     async def set_thermostat_home_set_points(
         self,
@@ -524,6 +527,14 @@ class DaikinOne:
             method="PUT",
             body=payload,
         )
+        if thermostat_id in self.__thermostats:
+            thermostat = self.__thermostats[thermostat_id]
+            if heat is not None:
+                thermostat.set_point_heat = heat
+            if cool is not None:
+                thermostat.set_point_cool = cool
+            if auto is not None:
+                thermostat.set_point_auto = auto
 
     async def set_thermostat_fan_mode(self, thermostat_id: str, fan_mode: DaikinThermostatFanMode) -> None:
         """Set thermostat fan mode"""
@@ -657,6 +668,7 @@ class DaikinOne:
                 air_quality_outdoor=self.__map_air_quality_outdoor(payload),
                 air_quality_indoor=self.__map_air_quality_indoor(payload),
                 equipment=self.__map_equipment(payload),
+                indoor_temperature_valid="iduRoomTemp" in payload.data,
             )
         except Exception as e:
             # Improve logging when Daikin changes payload

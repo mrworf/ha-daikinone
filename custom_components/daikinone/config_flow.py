@@ -12,9 +12,15 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import (
     CONF_OPTION_ENTITY_UID_SCHEMA_VERSION_KEY,
+    CONF_OPTION_CONVERT_EXTERNAL_AUTO,
+    CONF_OPTION_EMULATION_DWELL_MINUTES,
+    CONF_OPTION_EMULATION_TOLERANCE,
     CONF_OPTION_HEAT_PUMP_GROUPS_KEY,
     CONF_OPTION_HEAT_PUMP_GROUPS_SCHEMA_VERSION_KEY,
     DOMAIN,
+    DEFAULT_CONVERT_EXTERNAL_AUTO,
+    DEFAULT_EMULATION_DWELL_MINUTES,
+    DEFAULT_EMULATION_TOLERANCE,
     HEAT_PUMP_GROUPS_SCHEMA_VERSION,
 )
 from .daikinone import DaikinHeatPumpGroup, DaikinOne, DaikinUserCredentials
@@ -25,6 +31,9 @@ CONF_GROUP_ID = "group_id"
 CONF_GROUP_NAME = "name"
 CONF_GROUP_MEMBERS = "members"
 CONF_DELETE_GROUP = "delete_group"
+CONF_EMULATION_TOLERANCE = "emulation_tolerance"
+CONF_EMULATION_DWELL_MINUTES = "emulation_dwell_minutes"
+CONF_CONVERT_EXTERNAL_AUTO = "convert_external_auto"
 
 
 def validate_heat_pump_group(
@@ -108,6 +117,15 @@ class DaikinOneOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
         ]
         self._selected_group_id: str | None = None
         self._removed_group_ids: set[str] = set()
+        self._emulation_tolerance = float(
+            self.options.get(CONF_OPTION_EMULATION_TOLERANCE, DEFAULT_EMULATION_TOLERANCE)
+        )
+        self._emulation_dwell_minutes = int(
+            self.options.get(CONF_OPTION_EMULATION_DWELL_MINUTES, DEFAULT_EMULATION_DWELL_MINUTES)
+        )
+        self._convert_external_auto = bool(
+            self.options.get(CONF_OPTION_CONVERT_EXTERNAL_AUTO, DEFAULT_CONVERT_EXTERNAL_AUTO)
+        )
 
     @property
     def _connector(self) -> DaikinOne:
@@ -131,10 +149,37 @@ class DaikinOneOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Show grouping actions."""
-        menu_options = ["add_group", "finish"]
+        menu_options = ["add_group", "emulation_settings", "finish"]
         if self._groups:
             menu_options.insert(0, "edit_group")
         return self.async_show_menu(step_id="init", menu_options=menu_options)
+
+    async def async_step_emulation_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Configure global emulated Heat/Cool behavior."""
+        if user_input is not None:
+            self._emulation_tolerance = float(user_input[CONF_EMULATION_TOLERANCE])
+            self._emulation_dwell_minutes = int(user_input[CONF_EMULATION_DWELL_MINUTES])
+            self._convert_external_auto = bool(user_input[CONF_CONVERT_EXTERNAL_AUTO])
+            return await self.async_step_init()
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_EMULATION_TOLERANCE): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=5.0)),
+                vol.Required(CONF_EMULATION_DWELL_MINUTES): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
+                vol.Required(CONF_CONVERT_EXTERNAL_AUTO): bool,
+            }
+        )
+        return self.async_show_form(
+            step_id="emulation_settings",
+            data_schema=self.add_suggested_values_to_schema(
+                schema,
+                {
+                    CONF_EMULATION_TOLERANCE: self._emulation_tolerance,
+                    CONF_EMULATION_DWELL_MINUTES: self._emulation_dwell_minutes,
+                    CONF_CONVERT_EXTERNAL_AUTO: self._convert_external_auto,
+                },
+            ),
+        )
 
     async def async_step_edit_group(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Select a group to edit."""
@@ -224,5 +269,8 @@ class DaikinOneOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
                 **self.options,
                 CONF_OPTION_HEAT_PUMP_GROUPS_SCHEMA_VERSION_KEY: HEAT_PUMP_GROUPS_SCHEMA_VERSION,
                 CONF_OPTION_HEAT_PUMP_GROUPS_KEY: [group.as_dict() for group in self._groups],
+                CONF_OPTION_EMULATION_TOLERANCE: self._emulation_tolerance,
+                CONF_OPTION_EMULATION_DWELL_MINUTES: self._emulation_dwell_minutes,
+                CONF_OPTION_CONVERT_EXTERNAL_AUTO: self._convert_external_auto,
             },
         )

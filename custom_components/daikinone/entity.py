@@ -3,7 +3,7 @@ import backoff
 from typing import Callable, Awaitable
 
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from custom_components.daikinone import DaikinOneData
 from custom_components.daikinone.const import DOMAIN, MANUFACTURER
@@ -12,7 +12,7 @@ from custom_components.daikinone.daikinone import DaikinDevice, DaikinEquipment,
 log = logging.getLogger(__name__)
 
 
-class DaikinOneEntity[D: DaikinDevice](Entity):
+class DaikinOneEntity[D: DaikinDevice](RestoreEntity):
     _device: D
     _data: DaikinOneData
 

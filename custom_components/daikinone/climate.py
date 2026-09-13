@@ -1,5 +1,6 @@
 from enum import Enum
 import logging
+from typing import Any, cast
 
 from homeassistant.components.climate import (
     ClimateEntity,
@@ -17,6 +18,7 @@ from homeassistant.components.climate.const import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature, ATTR_TEMPERATURE
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from custom_components.daikinone import DaikinOneData, DOMAIN
@@ -116,14 +118,49 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             self._attr_supported_features |= ClimateEntityFeature.PRESET_MODE
             self._attr_preset_modes += [DaikinOneThermostatPresetMode.EMERGENCY_HEAT.value]
 
+        self._data.emulation.register(thermostat, self._controller_updated)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore logical emulation state after the entity is added."""
+        await super().async_added_to_hass()
+        if (last_state := await self.async_get_last_state()) is not None:
+            try:
+                logical_mode = HVACMode(last_state.state)
+            except ValueError:
+                logical_mode = None
+            attributes = cast(dict[str, Any], last_state.attributes)  # pyright: ignore[reportUnknownMemberType]
+            previous_physical = cast(object, attributes.get("emulation_physical_mode"))
+            physical_mode: DaikinThermostatMode | None = None
+            try:
+                if isinstance(previous_physical, (int, str)):
+                    physical_mode = DaikinThermostatMode(int(previous_physical))
+            except ValueError:
+                pass
+            if logical_mode is not None:
+                self._data.emulation.restore(self._device.id, logical_mode, physical_mode)
+                self.update_entity_attributes()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Remove controller callbacks when the entity unloads."""
+        self._data.emulation.unregister(self._device.id)
+        await super().async_will_remove_from_hass()
+
+    def _controller_updated(self) -> None:
+        """Publish logical/controller state after a group reconciliation."""
+        self._device = self._data.daikin.get_thermostat(self._device.id)
+        self.update_entity_attributes()
+        if getattr(self, "entity_id", None):
+            self.async_write_ha_state()
+
     def get_hvac_modes(self) -> list[HVACMode]:
         modes: list[HVACMode] = []
 
-        #       if (
-        #           DaikinThermostatCapability.HEAT in self._device.capabilities
-        #           and DaikinThermostatCapability.COOL in self._device.capabilities
-        #       ):
-        #           modes.append(HVACMode.HEAT_COOL)
+        if (
+            DaikinThermostatCapability.HEAT in self._device.capabilities
+            and DaikinThermostatCapability.COOL in self._device.capabilities
+            and self._data.emulation.supports_emulation(self._device)
+        ):
+            modes.append(HVACMode.HEAT_COOL)
 
         if DaikinThermostatCapability.HEAT in self._device.capabilities:
             modes.append(HVACMode.HEAT)
@@ -140,10 +177,21 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         """Set new target hvac mode."""
         target_mode: DaikinThermostatMode
         match hvac_mode:
+            case HVACMode.HEAT_COOL:
+                if HVACMode.HEAT_COOL not in self.hvac_modes:
+                    raise ServiceValidationError(
+                        "Emulated Heat/Cool requires a resolved heat-pump assignment",
+                        translation_domain=DOMAIN,
+                        translation_key="unassigned_heat_pump",
+                    )
+                await self._data.emulation.async_set_logical_mode(self._device.id, hvac_mode)
+                self._device = self._data.daikin.get_thermostat(self._device.id)
+                self.update_entity_attributes()
+                if getattr(self, "entity_id", None):
+                    self.async_write_ha_state()
+                return
             case HVACMode.AUTO:
                 target_mode = DaikinThermostatMode.AUTO
-            #            case HVACMode.HEAT_COOL:
-            #                target_mode = DaikinThermostatMode.EMULATED_AUTO
             case HVACMode.HEAT:
                 target_mode = DaikinThermostatMode.HEAT
             case HVACMode.COOL:
@@ -163,10 +211,18 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             t.mode = target_mode
 
         await self.update_state_optimistically(
-            operation=lambda: self._data.daikin.set_thermostat_mode(self._device.id, target_mode),
+            operation=lambda: self._data.emulation.async_set_manual_mode(self._device.id, target_mode),
             optimistic_update=update,
             check=lambda t: t.mode == target_mode,
         )
+
+    async def async_turn_on(self) -> None:
+        """Restore the previous logical non-Off mode."""
+        await self.async_set_hvac_mode(self._data.emulation.previous_mode(self._device.id))
+
+    async def async_turn_off(self) -> None:
+        """Turn off physical and emulated control."""
+        await self.async_set_hvac_mode(HVACMode.OFF)
 
     async def async_set_preset_mode(self, preset_mode: str):
         """Set new target preset mode."""
@@ -190,7 +246,7 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             case _:
                 raise ValueError(f"Attempted to set unsupported preset mode: {preset_mode}")
 
-    async def async_set_temperature(self, **kwargs: float) -> None:
+    async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature(s)."""
 
         temperature = kwargs.get(ATTR_TEMPERATURE)
@@ -198,8 +254,39 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         target_temp_high = kwargs.get(ATTR_TARGET_TEMP_HIGH)
         hvac_mode = kwargs.get(ATTR_HVAC_MODE)
 
+        logical_mode = self._data.emulation.logical_mode(self._device.id)
+        if hvac_mode is HVACMode.HEAT_COOL or (hvac_mode is None and logical_mode is HVACMode.HEAT_COOL):
+            if target_temp_low is None or target_temp_high is None or target_temp_low >= target_temp_high:
+                raise ServiceValidationError(
+                    "Emulated Heat/Cool requires a valid low and high target",
+                    translation_domain=DOMAIN,
+                    translation_key="invalid_temperature_range",
+                )
+            heat = Temperature.from_celsius(target_temp_low)
+            cool = Temperature.from_celsius(target_temp_high)
+
+            def update_range(t: DaikinThermostat) -> None:
+                t.set_point_heat = heat
+                t.set_point_cool = cool
+
+            await self.update_state_optimistically(
+                operation=lambda: self._data.daikin.set_thermostat_home_set_points(
+                    self._device.id,
+                    heat=heat,
+                    cool=cool,
+                    override_schedule=self._device.schedule.enabled,
+                ),
+                optimistic_update=update_range,
+                check=lambda t: t.set_point_heat == heat and t.set_point_cool == cool,
+            )
+            if hvac_mode is HVACMode.HEAT_COOL:
+                await self.async_set_hvac_mode(HVACMode.HEAT_COOL)
+            else:
+                await self._data.emulation.async_reconcile()
+            return
+
         if hvac_mode:
-            await self.async_set_hvac_mode(hvac_mode)  # type: ignore
+            await self.async_set_hvac_mode(hvac_mode)
 
         if target_temp_low or target_temp_high:
             heat = Temperature.from_celsius(target_temp_low) if target_temp_low is not None else None
@@ -317,23 +404,25 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
 
         # hvac current mode and preset
         self._attr_preset_mode = DaikinOneThermostatPresetMode.NONE.value
-        match self._device.mode:
-            case DaikinThermostatMode.AUTO:
-                self._attr_hvac_mode = HVACMode.AUTO
-            #            case DaikinThermostatMode.EMULATED_AUTO:
-            #                self._attr_hvac_mode = HVACMode.HEAT_COOL
-            case DaikinThermostatMode.HEAT:
-                self._attr_hvac_mode = HVACMode.HEAT
-            case DaikinThermostatMode.COOL:
-                self._attr_hvac_mode = HVACMode.COOL
-            case DaikinThermostatMode.AUX_HEAT:
-                self._attr_hvac_mode = HVACMode.HEAT
-                self._attr_preset_mode = DaikinOneThermostatPresetMode.EMERGENCY_HEAT.value
-            case DaikinThermostatMode.OFF:
-                self._attr_hvac_mode = HVACMode.OFF
-            case DaikinThermostatMode.DRY:
-                # DRY is not currently advertised as a supported Home Assistant mode.
-                pass
+        logical_mode = self._data.emulation.logical_mode(self._device.id)
+        if logical_mode is HVACMode.HEAT_COOL:
+            self._attr_hvac_mode = HVACMode.HEAT_COOL
+        else:
+            match self._device.mode:
+                case DaikinThermostatMode.AUTO:
+                    self._attr_hvac_mode = HVACMode.AUTO
+                case DaikinThermostatMode.HEAT:
+                    self._attr_hvac_mode = HVACMode.HEAT
+                case DaikinThermostatMode.COOL:
+                    self._attr_hvac_mode = HVACMode.COOL
+                case DaikinThermostatMode.AUX_HEAT:
+                    self._attr_hvac_mode = HVACMode.HEAT
+                    self._attr_preset_mode = DaikinOneThermostatPresetMode.EMERGENCY_HEAT.value
+                case DaikinThermostatMode.OFF:
+                    self._attr_hvac_mode = HVACMode.OFF
+                case DaikinThermostatMode.DRY:
+                    # DRY is not currently advertised as a supported Home Assistant mode.
+                    pass
 
         # hvac current action
         match self._device.status:
@@ -355,19 +444,26 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         self._attr_target_temperature_low = None
         self._attr_target_temperature_high = None
 
-        match self._device.mode:
-            case DaikinThermostatMode.HEAT | DaikinThermostatMode.AUX_HEAT:
-                self._attr_target_temperature = self._device.set_point_heat.celsius
-            case DaikinThermostatMode.COOL:
-                self._attr_target_temperature = self._device.set_point_cool.celsius
-            case DaikinThermostatMode.AUTO:
-                self._attr_target_temperature = self._device.set_point_auto.celsius
-            #            case DaikinThermostatMode.EMULATED_AUTO:
-            #                # We're using the real values from Diakin
-            #                self._attr_target_temperature_low = self._device.set_point_heat.celsius
-            #                self._attr_target_temperature_high = self._device.set_point_cool.celsius
-            case _:
-                pass
+        if logical_mode is HVACMode.HEAT_COOL:
+            self._attr_target_temperature_low = self._device.set_point_heat.celsius
+            self._attr_target_temperature_high = self._device.set_point_cool.celsius
+        else:
+            match self._device.mode:
+                case DaikinThermostatMode.HEAT | DaikinThermostatMode.AUX_HEAT:
+                    self._attr_target_temperature = self._device.set_point_heat.celsius
+                case DaikinThermostatMode.COOL:
+                    self._attr_target_temperature = self._device.set_point_cool.celsius
+                case DaikinThermostatMode.AUTO:
+                    self._attr_target_temperature = self._device.set_point_auto.celsius
+                case _:
+                    pass
+
+        emulation_status = self._data.emulation.status(self._device.id)
+        self._attr_extra_state_attributes = {
+            "emulation_physical_mode": self._data.emulation.expected_physical_mode(self._device.id).value,
+        }
+        if emulation_status is not None:
+            self._attr_extra_state_attributes["emulation_status"] = emulation_status.value
 
         # temperature bounds
         # these should be the same but just in case, take the larger of the two for the min

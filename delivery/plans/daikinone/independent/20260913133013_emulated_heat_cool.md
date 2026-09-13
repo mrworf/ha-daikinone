@@ -22,7 +22,7 @@ heat pump so it is never deliberately commanded to heat and cool simultaneously.
 ## Slice index
 
 1. [Native Auto single-setpoint support](20260913133013_emulated_heat_cool_slice_01.md) — completed
-2. [Group-aware emulated Heat/Cool controller](20260913133013_emulated_heat_cool_slice_02.md)
+2. [Group-aware emulated Heat/Cool controller](20260913133013_emulated_heat_cool_slice_02.md) — completed
 
 ## Completion criteria
 
@@ -33,3 +33,9 @@ heat pump so it is never deliberately commanded to heat and cool simultaneously.
   manual/native-Auto ownership visibly suspends incompatible emulated demand.
 - Logical state survives restart, remote changes are respected, and existing
   functionality passes the full validation suite.
+
+## Delivery result
+
+Both slices are implemented. The final suite contains 35 passing tests; Ruff,
+Pyright, Black, bytecode compilation, translation JSON validation, and diff
+checks pass.

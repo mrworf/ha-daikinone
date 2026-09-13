@@ -101,3 +101,11 @@ connector cache/command support, options flow/translations, tests, and README.
 Commit controller behavior, options, climate integration, documentation, tests,
 and this completed slice record as one coherent slice after all validation
 passes.
+
+## Delivery result
+
+Delivered with 35 passing tests. Ruff, Pyright, Black, compileall, translation
+JSON validation, and diff checks pass. Controller tests cover hysteresis,
+largest-deviation selection and ties, dwell and confirmed-Off reversal, manual
+and native-Auto suspension, remote takeover and conversion, restore behavior,
+missing data, command isolation, options, and the climate Heat/Cool contract.

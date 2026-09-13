@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
@@ -18,6 +18,7 @@ from custom_components.daikinone.const import (
     MIN_TIME_BETWEEN_UPDATES,
 )
 from custom_components.daikinone.daikinone import DaikinOne, DaikinUserCredentials
+from custom_components.daikinone.emulation import DaikinEmulationController
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +28,10 @@ class DaikinOneData:
     _hass: HomeAssistant
     entry: ConfigEntry
     daikin: DaikinOne
+    emulation: DaikinEmulationController = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.emulation = DaikinEmulationController(self._hass, self.entry, self.daikin)
 
     async def update(self, no_throttle: bool = False) -> None:
         """Get the latest data from Daikin cloud"""
@@ -40,6 +45,7 @@ class DaikinOneData:
         """
         log.debug("Updating Daikin One data from cloud")
         await self.daikin.update()
+        await self.emulation.async_reconcile()
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -114,6 +120,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload the config entry and platforms"""
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if ok:
+        await hass.data[DOMAIN].emulation.async_shutdown()
         hass.data.pop(DOMAIN)
     return ok
 

@@ -55,7 +55,45 @@ def thermostat(mode: DaikinThermostatMode = DaikinThermostatMode.AUTO) -> Daikin
 
 
 def climate_entity(device: DaikinThermostat, connector: Any | None = None) -> DaikinOneThermostat:
-    data = cast(Any, SimpleNamespace(daikin=connector or SimpleNamespace()))
+    daikin = connector or SimpleNamespace()
+
+    class FakeEmulation:
+        def __init__(self) -> None:
+            self.mode = {
+                DaikinThermostatMode.AUTO: HVACMode.AUTO,
+                DaikinThermostatMode.HEAT: HVACMode.HEAT,
+                DaikinThermostatMode.COOL: HVACMode.COOL,
+                DaikinThermostatMode.OFF: HVACMode.OFF,
+            }.get(device.mode, HVACMode.HEAT)
+
+        def register(self, registered: DaikinThermostat, callback: Any) -> None:
+            assert registered.id == device.id
+
+        def supports_emulation(self, registered: DaikinThermostat) -> bool:
+            return True
+
+        def logical_mode(self, thermostat_id: str) -> HVACMode:
+            return self.mode
+
+        def status(self, thermostat_id: str) -> None:
+            return None
+
+        def expected_physical_mode(self, thermostat_id: str) -> DaikinThermostatMode:
+            return device.mode
+
+        def previous_mode(self, thermostat_id: str) -> HVACMode:
+            return HVACMode.HEAT
+
+        async def async_set_manual_mode(self, thermostat_id: str, mode: DaikinThermostatMode) -> None:
+            await daikin.set_thermostat_mode(thermostat_id, mode)
+            self.mode = {
+                DaikinThermostatMode.AUTO: HVACMode.AUTO,
+                DaikinThermostatMode.HEAT: HVACMode.HEAT,
+                DaikinThermostatMode.COOL: HVACMode.COOL,
+                DaikinThermostatMode.OFF: HVACMode.OFF,
+            }.get(mode, HVACMode.HEAT)
+
+    data = cast(Any, SimpleNamespace(daikin=daikin, emulation=FakeEmulation()))
     return DaikinOneThermostat(
         ClimateEntityDescription(key=device.id, has_entity_name=True, name=None),
         data,

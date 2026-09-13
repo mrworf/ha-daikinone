@@ -21,6 +21,7 @@
         "menu_options": {
           "edit_group": "Edit a heat pump",
           "add_group": "Add a heat pump",
+          "emulation_settings": "Emulated Heat/Cool settings",
           "finish": "Save changes"
         }
       },
@@ -38,6 +39,15 @@
           "members": "Connected indoor heads",
           "delete_group": "Delete this heat pump"
         }
+      },
+      "emulation_settings": {
+        "title": "Configure emulated Heat/Cool",
+        "description": "Control how indoor heads coordinate heating and cooling on a shared outdoor heat pump.",
+        "data": {
+          "emulation_tolerance": "Temperature tolerance (°C)",
+          "emulation_dwell_minutes": "Minimum direction time (minutes)",
+          "convert_external_auto": "Convert external Daikin Auto to emulated Heat/Cool"
+        }
       }
     },
     "error": {
@@ -46,6 +56,14 @@
       "unknown_head": "One or more selected heads are no longer available.",
       "different_locations": "All selected heads must be in the same Daikin location.",
       "duplicate_head": "An indoor head can belong to only one heat pump."
+    }
+  },
+  "exceptions": {
+    "invalid_temperature_range": {
+      "message": "Emulated Heat/Cool requires both a low and high target, and the low target must be below the high target."
+    },
+    "unassigned_heat_pump": {
+      "message": "Assign this indoor head to its outdoor heat pump before enabling emulated Heat/Cool."
     }
   },
   "issues": {

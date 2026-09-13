@@ -20,6 +20,7 @@ A custom component for Home Assistant to integrate with Daikin One+ smart HVAC s
 ## Features
 
 - Controllable climate entities for each thermostat
+- Native Daikin Auto with its single target temperature, plus an emulated Heat/Cool range mode
 - All HVAC modes supported by the Daikin One+ system, including Emergency Heat
 - Intelligent handling of thermostat updates for ultra-fast response times
 - Sensors for status, temperatures, airflow, demand, etc. for all connected equipment
@@ -39,6 +40,31 @@ Energy dashboard.
 If automatic discovery is uncertain, the affected heads remain fully functional and Home Assistant raises a repair
 notice. Open the Daikin One integration's **Configure** dialog to add, rename, remove, or correct heat-pump groups.
 Each indoor head can belong to only one heat pump.
+
+### Emulated Heat/Cool
+
+For heads that support both heating and cooling, Home Assistant exposes two
+distinct automatic modes:
+
+- **Auto** is Daikin's native mode and uses one target temperature.
+- **Heat/Cool** is managed by this integration and uses Home Assistant's low and
+  high target temperatures. The head is switched between Heat, Cool, and Off as
+  needed.
+
+Heads connected to the same outdoor heat pump are coordinated. The room furthest
+outside its configured range selects the outdoor unit's direction, with a
+configurable hysteresis and minimum direction time to reduce cycling. Explicit
+Heat, Cool, or native Auto commands take priority; incompatible emulated heads
+remain off and show their reason in the `emulation_status` attribute. Home
+Assistant also shows a temporary notification while manual control suspends an
+emulated head.
+
+The integration options configure the global temperature tolerance, minimum
+direction time, and whether an Auto selection made outside Home Assistant should
+be converted to emulated Heat/Cool. External Auto conversion is disabled by
+default. Physical remote Heat, Cool, and Off commands leave emulated mode and are
+respected after the integration has distinguished them from a recently sent
+cloud command.
 
 <!-- markdownlint-disable-next-line no-inline-html -->
 <img src="docs/dashboard.png" width="350" alt="dashboard example">
