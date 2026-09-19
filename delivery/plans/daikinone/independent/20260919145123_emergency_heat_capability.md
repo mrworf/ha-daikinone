@@ -21,4 +21,5 @@ device-data field or the legacy field used by the Daikin application.
 ## Transaction
 
 - Parent commit: `e23600bf69e3b7eb95da8a557a238431670dd3e1`.
-- Payload commit: recorded by the provenance closeout after delivery.
+- Payload commit: `5a5497cafb34a30bb78b76f3d58d8dae526501bd`.
+- Slice status: complete.

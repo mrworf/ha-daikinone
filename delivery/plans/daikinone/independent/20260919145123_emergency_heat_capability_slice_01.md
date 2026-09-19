@@ -51,3 +51,9 @@ equipment that reports support.
 
 Commit the plan, capability correction, and tests as one semantic payload, followed only by the exact-SHA
 provenance closeout.
+
+## Completion
+
+- Status: complete.
+- Payload commit: `5a5497cafb34a30bb78b76f3d58d8dae526501bd`.
+- Validation: 66 tests passed; Pyright, Ruff, Black, JSON parsing, and Git whitespace checks passed.
