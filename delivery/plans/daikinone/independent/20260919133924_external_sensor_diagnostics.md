@@ -21,4 +21,4 @@ adaptive-controller status without changing runtime control behavior.
 ## Transaction
 
 - Parent commit: `89d471e37d88e347a5f833ad402dc6ccfc48cc03`.
-- Payload commit: recorded by the provenance closeout after delivery.
+- Payload commit: `043df8dbe64807ade46add0a431cb67e1aa8be7c`.
