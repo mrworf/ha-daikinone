@@ -14,7 +14,10 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
     data: DaikinOneData = hass.data[DOMAIN]
     raw = await data.daikin.get_all_raw_device_data()
 
-    return {"raw": raw}
+    return {
+        "raw": raw,
+        "external_temperature_control": data.external_temperature.all_diagnostics(),
+    }
 
 
 async def async_get_device_diagnostics(
@@ -24,4 +27,7 @@ async def async_get_device_diagnostics(
     device_id = next(i for i in device.identifiers if i[0] == DOMAIN)[1]
     raw = await data.daikin.get_raw_device_data(device_id)
 
-    return {"raw": raw}
+    return {
+        "raw": raw,
+        "external_temperature_control": data.external_temperature.diagnostics(device_id),
+    }

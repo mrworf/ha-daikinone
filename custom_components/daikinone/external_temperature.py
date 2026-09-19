@@ -236,6 +236,43 @@ class ExternalTemperatureController:
     def state(self, thermostat_id: str) -> AdaptiveHeadState | None:
         return self._heads.get(thermostat_id)
 
+    def diagnostics(self, thermostat_id: str) -> dict[str, Any] | None:
+        """Return a read-only external-control snapshot for HA diagnostics."""
+        config = self._configs.get(thermostat_id)
+        state = self._heads.get(thermostat_id)
+        if config is None:
+            return None
+        thermostat = self._daikin.get_thermostats().get(thermostat_id)
+        physical_heat: float | None = None
+        physical_cool: float | None = None
+        if thermostat is not None and state is not None:
+            physical_heat, physical_cool = self.physical_targets(thermostat)
+        return {
+            "temperature_sensor_entity_id": config.sensor_entity_id,
+            "external_temperature": self.external_temperature(thermostat_id),
+            "humidity_sensor_entity_id": config.humidity_sensor_entity_id,
+            "external_humidity": self.external_humidity(thermostat_id),
+            "max_bias": config.max_bias,
+            "status": state.status.value if state is not None else None,
+            "logical_heat_target": state.logical_heat if state is not None else None,
+            "logical_cool_target": state.logical_cool if state is not None else None,
+            "heating_bias": state.heat_bias if state is not None else None,
+            "cooling_bias": state.cool_bias if state is not None else None,
+            "physical_heat_target": physical_heat,
+            "physical_cool_target": physical_cool,
+            "last_evaluated": state.last_evaluated.isoformat() if state and state.last_evaluated else None,
+            "last_adjusted": state.last_adjusted.isoformat() if state and state.last_adjusted else None,
+            "setpoint_limited": state.limited if state is not None else None,
+        }
+
+    def all_diagnostics(self) -> dict[str, dict[str, Any]]:
+        """Return diagnostic snapshots for every configured head."""
+        return {
+            thermostat_id: snapshot
+            for thermostat_id in sorted(self._configs)
+            if (snapshot := self.diagnostics(thermostat_id)) is not None
+        }
+
     def logical_heat(self, thermostat: DaikinThermostat) -> float:
         state = self._heads.get(thermostat.id)
         return state.logical_heat if state is not None else thermostat.set_point_heat.celsius

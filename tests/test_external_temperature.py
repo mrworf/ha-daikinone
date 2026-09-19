@@ -251,6 +251,31 @@ def test_external_humidity_requires_a_fresh_percentage() -> None:
     assert controller.external_humidity("head") is None
 
 
+def test_diagnostics_expose_current_external_values_and_control_state() -> None:
+    controller, _, _, _ = make_controller(
+        mode=DaikinThermostatMode.HEAT,
+        external=20.5,
+        humidity=56,
+    )
+    state = controller.state("head")
+    assert state is not None
+    state.heat_bias = 1.5
+    state.status = ExternalTemperatureStatus.ADAPTING_HEAT
+
+    snapshot = controller.diagnostics("head")
+
+    assert snapshot is not None
+    assert snapshot["temperature_sensor_entity_id"] == "sensor.room"
+    assert snapshot["external_temperature"] == 20.5
+    assert snapshot["humidity_sensor_entity_id"] == "sensor.room_humidity"
+    assert snapshot["external_humidity"] == 56
+    assert snapshot["status"] == "adapting_heat"
+    assert snapshot["heating_bias"] == 1.5
+    assert snapshot["physical_heat_target"] == 23.5
+    assert controller.all_diagnostics() == {"head": snapshot}
+    assert controller.diagnostics("not-configured") is None
+
+
 def test_stale_sensor_falls_back_without_changing_bias() -> None:
     controller, daikin, clock, sensor = make_controller(mode=DaikinThermostatMode.HEAT, external=18)
     sensor.last_updated = clock[0] - timedelta(minutes=31)
