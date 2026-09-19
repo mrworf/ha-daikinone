@@ -23,6 +23,7 @@ from custom_components.daikinone.daikinone import (
     DaikinThermostatCirculationSpeed,
     DaikinThermostatFanSpeed,
     DaikinThermostatMode,
+    DaikinThermostatSwingMode,
     DaikinUserCredentials,
 )
 from custom_components.daikinone.select import (
@@ -73,11 +74,20 @@ def test_mapper_reads_operating_and_optional_circulation_controls(
                 "iduAutoFanSpeed": 10,
                 "iduDryFanSpeed": 11,
                 "iduFanModeFanSpeed": 5,
+                "iduHeatAirDirectionUpDown": 23,
+                "iduCoolAirDirectionUpDown": 15,
+                "iduAutoAirDirectionUpDown": 0,
             },
         ),
     )
     unitary = map_thermostat(connector, payload("unitary", {"fanCirculate": 2, "fanCirculateSpeed": 1}))
-    unknown = map_thermostat(connector, payload("future", {"iduHeatFanSpeed": 99}))
+    unknown = map_thermostat(
+        connector,
+        payload(
+            "future",
+            {"iduHeatFanSpeed": 99, "iduHeatAirDirectionUpDown": 99},
+        ),
+    )
 
     assert head.fan_speeds.heat is DaikinThermostatFanSpeed.LOW
     assert head.fan_speeds.cool is DaikinThermostatFanSpeed.HIGH
@@ -92,11 +102,22 @@ def test_mapper_reads_operating_and_optional_circulation_controls(
     }
     assert not head.circulation_mode_supported
     assert not head.circulation_speed_supported
+    assert head.swing_modes.heat is DaikinThermostatSwingMode.FIXED
+    assert head.swing_modes.cool is DaikinThermostatSwingMode.OSCILLATE
+    assert head.swing_modes.auto is DaikinThermostatSwingMode.FIXED
+    assert head.swing_mode_supported_modes == {
+        DaikinThermostatMode.HEAT,
+        DaikinThermostatMode.COOL,
+        DaikinThermostatMode.AUTO,
+    }
     assert unitary.circulation_mode is DaikinThermostatCirculationMode.SCHEDULED
     assert unitary.circulation_speed is DaikinThermostatCirculationSpeed.MEDIUM
+    assert not unitary.swing_mode_supported_modes
     assert unknown.operating_fan_speed_supported
     assert unknown.fan_speeds.heat is None
+    assert unknown.swing_modes.heat is None
     assert "Ignoring unsupported iduHeatFanSpeed value 99" in caplog.text
+    assert "Ignoring unsupported iduHeatAirDirectionUpDown value 99" in caplog.text
 
 
 @pytest.mark.parametrize(

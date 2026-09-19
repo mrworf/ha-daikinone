@@ -205,6 +205,20 @@ class DaikinThermostatFanSpeeds:
     fan: DaikinThermostatFanSpeed | None
 
 
+class DaikinThermostatSwingMode(Enum):
+    FIXED = 0
+    OSCILLATE = 15
+
+
+@dataclass
+class DaikinThermostatSwingModes:
+    heat: DaikinThermostatSwingMode | None
+    cool: DaikinThermostatSwingMode | None
+    auto: DaikinThermostatSwingMode | None
+    dry: DaikinThermostatSwingMode | None
+    fan: DaikinThermostatSwingMode | None
+
+
 @dataclass
 class DaikinThermostat(DaikinDevice):
     location_id: str
@@ -215,6 +229,8 @@ class DaikinThermostat(DaikinDevice):
     fan_speeds: DaikinThermostatFanSpeeds
     operating_fan_speed_supported: bool
     fan_speed_supported_modes: set[DaikinThermostatMode]
+    swing_modes: DaikinThermostatSwingModes
+    swing_mode_supported_modes: set[DaikinThermostatMode]
     circulation_mode: DaikinThermostatCirculationMode | None
     circulation_mode_supported: bool
     circulation_speed: DaikinThermostatCirculationSpeed | None
@@ -620,6 +636,32 @@ class DaikinOne:
             for mode in modes:
                 setattr(cached, mode.name.lower(), fan_speed)
 
+    async def set_thermostat_swing_mode(
+        self,
+        thermostat_id: str,
+        swing_mode: DaikinThermostatSwingMode,
+        modes: set[DaikinThermostatMode],
+    ) -> None:
+        """Set one or more mode-specific vertical vane swing modes."""
+        fields = {
+            DaikinThermostatMode.HEAT: "iduHeatAirDirectionUpDown",
+            DaikinThermostatMode.COOL: "iduCoolAirDirectionUpDown",
+            DaikinThermostatMode.AUTO: "iduAutoAirDirectionUpDown",
+            DaikinThermostatMode.DRY: "iduDryAirDirectionUpDown",
+        }
+        if not modes or any(mode not in fields for mode in modes):
+            raise ValueError(f"Unsupported swing-mode modes: {modes}")
+
+        await self.__req(
+            url=f"{DAIKIN_API_URL_DEVICE_DATA}/{thermostat_id}",
+            method="PUT",
+            body={fields[mode]: swing_mode.value for mode in modes},
+        )
+        if thermostat_id in self.__thermostats:
+            cached = self.__thermostats[thermostat_id].swing_modes
+            for mode in modes:
+                setattr(cached, mode.name.lower(), swing_mode)
+
     async def __refresh_thermostats(self):
         devices = await self.__req(DAIKIN_API_URL_DEVICE_DATA)
         devices = [DaikinDeviceDataResponse(**device) for device in devices]
@@ -683,6 +725,22 @@ class DaikinOne:
                         payload.id,
                     )
                     return None
+
+            def optional_swing_mode(field: str) -> DaikinThermostatSwingMode | None:
+                if field not in payload.data:
+                    return None
+                value = payload.data[field]
+                if value in (0, 23):
+                    return DaikinThermostatSwingMode.FIXED
+                if value == 15:
+                    return DaikinThermostatSwingMode.OSCILLATE
+                log.warning(
+                    "Ignoring unsupported %s value %r for thermostat %s",
+                    field,
+                    value,
+                    payload.id,
+                )
+                return None
 
             capabilities: set[DaikinThermostatCapability] = set()
             if payload.data.get("ctSystemCapHeat") or payload.data.get("iduHeatSetpoint"):
@@ -756,6 +814,23 @@ class DaikinOne:
                         DaikinThermostatMode.COOL: "iduCoolFanSpeed",
                         DaikinThermostatMode.AUTO: "iduAutoFanSpeed",
                         DaikinThermostatMode.DRY: "iduDryFanSpeed",
+                    }.items()
+                    if field in payload.data
+                },
+                swing_modes=DaikinThermostatSwingModes(
+                    heat=optional_swing_mode("iduHeatAirDirectionUpDown"),
+                    cool=optional_swing_mode("iduCoolAirDirectionUpDown"),
+                    auto=optional_swing_mode("iduAutoAirDirectionUpDown"),
+                    dry=optional_swing_mode("iduDryAirDirectionUpDown"),
+                    fan=optional_swing_mode("iduFanAirDirectionUpDown"),
+                ),
+                swing_mode_supported_modes={
+                    mode
+                    for mode, field in {
+                        DaikinThermostatMode.HEAT: "iduHeatAirDirectionUpDown",
+                        DaikinThermostatMode.COOL: "iduCoolAirDirectionUpDown",
+                        DaikinThermostatMode.AUTO: "iduAutoAirDirectionUpDown",
+                        DaikinThermostatMode.DRY: "iduDryAirDirectionUpDown",
                     }.items()
                     if field in payload.data
                 },

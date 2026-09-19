@@ -113,6 +113,12 @@ Daikin's separate circulation controls, Home Assistant exposes them as
 created for mini-split heads whose API payload does not contain the corresponding
 circulation fields.
 
+Compatible mini-split heads also expose **Swing mode** with Fixed and Oscillate
+for the vertical vane. Like fan speed, Daikin stores vane behavior separately
+for each HVAC mode. Native Heat, Cool, and Auto update their own setting, while
+emulated Heat/Cool applies one selection to both Heat and Cool. The control is
+hidden in native Off and on heads that do not report vertical-vane fields.
+
 <!-- markdownlint-disable-next-line no-inline-html -->
 <img src="docs/dashboard.png" width="350" alt="dashboard example">
 

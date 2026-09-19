@@ -16,6 +16,8 @@ from custom_components.daikinone.daikinone import (
     DaikinThermostatMode,
     DaikinThermostatSchedule,
     DaikinThermostatStatus,
+    DaikinThermostatSwingMode,
+    DaikinThermostatSwingModes,
     DaikinUserCredentials,
 )
 from custom_components.daikinone.utils import Temperature
@@ -75,6 +77,19 @@ def thermostat(mode: DaikinThermostatMode = DaikinThermostatMode.AUTO) -> Daikin
         ),
         operating_fan_speed_supported=True,
         fan_speed_supported_modes={
+            DaikinThermostatMode.HEAT,
+            DaikinThermostatMode.COOL,
+            DaikinThermostatMode.AUTO,
+            DaikinThermostatMode.DRY,
+        },
+        swing_modes=DaikinThermostatSwingModes(
+            heat=DaikinThermostatSwingMode.FIXED,
+            cool=DaikinThermostatSwingMode.FIXED,
+            auto=DaikinThermostatSwingMode.FIXED,
+            dry=DaikinThermostatSwingMode.FIXED,
+            fan=DaikinThermostatSwingMode.FIXED,
+        ),
+        swing_mode_supported_modes={
             DaikinThermostatMode.HEAT,
             DaikinThermostatMode.COOL,
             DaikinThermostatMode.AUTO,
@@ -412,3 +427,115 @@ def test_connector_fan_speed_payload_uses_mode_specific_fields() -> None:
         asyncio.run(
             connector.set_thermostat_fan_speed("head", DaikinThermostatFanSpeed.AUTO, {DaikinThermostatMode.OFF})
         )
+
+
+def test_native_heat_swing_mode_sets_only_heat_vane() -> None:
+    device = thermostat(DaikinThermostatMode.HEAT)
+    calls: list[tuple[DaikinThermostatSwingMode, set[DaikinThermostatMode]]] = []
+
+    class FakeConnector:
+        async def set_thermostat_swing_mode(
+            self,
+            thermostat_id: str,
+            mode: DaikinThermostatSwingMode,
+            modes: set[DaikinThermostatMode],
+        ) -> None:
+            assert thermostat_id == "head"
+            calls.append((mode, modes))
+
+    entity = climate_entity(device, FakeConnector())
+
+    async def update_optimistically(operation: Any, optimistic_update: Any, check: Any) -> None:
+        await operation()
+        optimistic_update(device)
+        assert check(device)
+
+    entity.update_state_optimistically = update_optimistically  # type: ignore[method-assign]
+    entity.update_entity_attributes()
+
+    assert entity.swing_modes == ["fixed", "oscillate"]
+    assert entity.supported_features & ClimateEntityFeature.SWING_MODE
+    assert entity.swing_mode == "fixed"
+
+    asyncio.run(entity.async_set_swing_mode("oscillate"))
+
+    assert calls == [(DaikinThermostatSwingMode.OSCILLATE, {DaikinThermostatMode.HEAT})]
+    assert device.swing_modes.heat is DaikinThermostatSwingMode.OSCILLATE
+    assert device.swing_modes.cool is DaikinThermostatSwingMode.FIXED
+
+
+def test_emulated_heat_cool_sets_both_vanes_while_head_is_off() -> None:
+    device = thermostat(DaikinThermostatMode.OFF)
+    calls: list[set[DaikinThermostatMode]] = []
+
+    class FakeConnector:
+        async def set_thermostat_swing_mode(
+            self,
+            thermostat_id: str,
+            mode: DaikinThermostatSwingMode,
+            modes: set[DaikinThermostatMode],
+        ) -> None:
+            del thermostat_id, mode
+            calls.append(modes)
+
+    entity = climate_entity(device, FakeConnector(), logical_mode=HVACMode.HEAT_COOL)
+
+    async def update_optimistically(operation: Any, optimistic_update: Any, check: Any) -> None:
+        await operation()
+        optimistic_update(device)
+        assert check(device)
+
+    entity.update_state_optimistically = update_optimistically  # type: ignore[method-assign]
+    entity.update_entity_attributes()
+
+    assert entity.supported_features & ClimateEntityFeature.SWING_MODE
+    asyncio.run(entity.async_set_swing_mode("oscillate"))
+
+    assert calls == [{DaikinThermostatMode.HEAT, DaikinThermostatMode.COOL}]
+    assert device.swing_modes.heat is DaikinThermostatSwingMode.OSCILLATE
+    assert device.swing_modes.cool is DaikinThermostatSwingMode.OSCILLATE
+
+
+def test_emulated_heat_cool_idle_omits_mismatched_vane_mode() -> None:
+    device = thermostat(DaikinThermostatMode.OFF)
+    device.swing_modes.cool = DaikinThermostatSwingMode.OSCILLATE
+    entity = climate_entity(device, logical_mode=HVACMode.HEAT_COOL)
+
+    entity.update_entity_attributes()
+
+    assert entity.supported_features & ClimateEntityFeature.SWING_MODE
+    assert entity.swing_mode is None
+
+
+def test_native_off_hides_and_rejects_swing_control() -> None:
+    entity = climate_entity(thermostat(DaikinThermostatMode.OFF))
+
+    entity.update_entity_attributes()
+
+    assert not entity.supported_features & ClimateEntityFeature.SWING_MODE
+    assert entity.swing_mode is None
+    with pytest.raises(ValueError, match="unavailable"):
+        asyncio.run(entity.async_set_swing_mode("oscillate"))
+
+
+def test_connector_swing_payload_uses_mode_specific_fields() -> None:
+    connector = DaikinOne(DaikinUserCredentials("user@example.invalid", "unused"))
+    requests: list[dict[str, Any]] = []
+
+    async def request(*args: Any, **kwargs: Any) -> None:
+        requests.append(kwargs)
+
+    connector._DaikinOne__req = request  # type: ignore[attr-defined]
+
+    asyncio.run(
+        connector.set_thermostat_swing_mode(
+            "head",
+            DaikinThermostatSwingMode.OSCILLATE,
+            {DaikinThermostatMode.HEAT, DaikinThermostatMode.COOL},
+        )
+    )
+
+    assert requests[0]["body"] == {
+        "iduHeatAirDirectionUpDown": 15,
+        "iduCoolAirDirectionUpDown": 15,
+    }

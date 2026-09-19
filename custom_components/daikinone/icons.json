@@ -18,6 +18,12 @@
               "medium high": "mdi:fan-speed-3",
               "high": "mdi:fan-speed-3"
             }
+          },
+          "swing_mode": {
+            "state": {
+              "fixed": "mdi:arrow-collapse-vertical",
+              "oscillate": "mdi:swap-vertical"
+            }
           }
         }
       }

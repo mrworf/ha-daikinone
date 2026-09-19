@@ -111,6 +111,12 @@
               "medium high": "Medium High",
               "high": "High"
             }
+          },
+          "swing_mode": {
+            "state": {
+              "fixed": "Fixed",
+              "oscillate": "Oscillate"
+            }
           }
         }
       }

@@ -28,6 +28,7 @@ from custom_components.daikinone.daikinone import (
     DaikinThermostatMode,
     DaikinThermostatStatus,
     DaikinThermostatFanSpeed,
+    DaikinThermostatSwingMode,
 )
 from custom_components.daikinone.utils import Temperature
 
@@ -73,6 +74,17 @@ FAN_MODE_TO_SPEED = {fan_mode.value: DaikinThermostatFanSpeed[fan_mode.name] for
 FAN_SPEED_TO_MODE = {speed: fan_mode for fan_mode, speed in FAN_MODE_TO_SPEED.items()}
 
 
+class DaikinOneThermostatSwingMode(Enum):
+    FIXED = "fixed"
+    OSCILLATE = "oscillate"
+
+
+SWING_MODE_TO_DAIKIN = {
+    swing_mode.value: DaikinThermostatSwingMode[swing_mode.name] for swing_mode in DaikinOneThermostatSwingMode
+}
+DAIKIN_TO_SWING_MODE = {mode: name for name, mode in SWING_MODE_TO_DAIKIN.items()}
+
+
 class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
     """Thermostat entity for Daikin One"""
 
@@ -101,6 +113,7 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         self._attr_supported_features = self._base_supported_features
         self._attr_hvac_modes = self.get_hvac_modes()
         self._attr_fan_modes = [m.value for m in DaikinOneThermostatFanMode]
+        self._attr_swing_modes = [m.value for m in DaikinOneThermostatSwingMode]
 
         # These attributes must be initialized otherwise HA `CachedProperties` doesn't create a
         # backing prop. If they are not initialized, climate will error during setup because we support
@@ -460,6 +473,53 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             return getattr(self._device.fan_speeds, self._device.mode.name.lower())
         return None
 
+    async def async_set_swing_mode(self, swing_mode: str) -> None:
+        """Set vertical vane behavior for the active logical mode."""
+        if (target_swing_mode := SWING_MODE_TO_DAIKIN.get(swing_mode)) is None:
+            raise ValueError(f"Attempted to set unsupported swing mode: {swing_mode}")
+        modes = self._swing_mode_modes()
+        if not modes or not modes.issubset(self._device.swing_mode_supported_modes):
+            raise ValueError("Swing mode is unavailable in the current mode")
+
+        def update(t: DaikinThermostat) -> None:
+            for mode in modes:
+                setattr(t.swing_modes, mode.name.lower(), target_swing_mode)
+
+        await self.update_state_optimistically(
+            operation=lambda: self._data.daikin.set_thermostat_swing_mode(self._device.id, target_swing_mode, modes),
+            optimistic_update=update,
+            check=lambda t: all(getattr(t.swing_modes, mode.name.lower()) == target_swing_mode for mode in modes),
+        )
+
+    def _swing_mode_modes(self) -> set[DaikinThermostatMode]:
+        """Return physical modes controlled by the current logical mode."""
+        if self._data.emulation.logical_mode(self._device.id) is HVACMode.HEAT_COOL:
+            return {DaikinThermostatMode.HEAT, DaikinThermostatMode.COOL}
+        if self._device.mode in {
+            DaikinThermostatMode.HEAT,
+            DaikinThermostatMode.COOL,
+            DaikinThermostatMode.AUTO,
+        }:
+            return {self._device.mode}
+        return set()
+
+    def _current_swing_mode(self) -> DaikinThermostatSwingMode | None:
+        """Resolve the vertical vane behavior for the logical mode."""
+        if self._data.emulation.logical_mode(self._device.id) is HVACMode.HEAT_COOL:
+            physical_mode = self._data.emulation.expected_physical_mode(self._device.id)
+            if physical_mode in {DaikinThermostatMode.HEAT, DaikinThermostatMode.COOL}:
+                return getattr(self._device.swing_modes, physical_mode.name.lower())
+            if self._device.swing_modes.heat == self._device.swing_modes.cool:
+                return self._device.swing_modes.heat
+            return None
+        if self._device.mode in {
+            DaikinThermostatMode.HEAT,
+            DaikinThermostatMode.COOL,
+            DaikinThermostatMode.AUTO,
+        }:
+            return getattr(self._device.swing_modes, self._device.mode.name.lower())
+        return None
+
     async def async_get_device(self) -> DaikinThermostat:
         return self._data.daikin.get_thermostat(self._device.id)
 
@@ -592,3 +652,12 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             self._attr_supported_features |= ClimateEntityFeature.FAN_MODE
         current_fan_speed = self._current_fan_speed() if fan_speed_available else None
         self._attr_fan_mode = FAN_SPEED_TO_MODE.get(current_fan_speed) if current_fan_speed is not None else None
+
+        swing_mode_modes = self._swing_mode_modes()
+        swing_mode_available = bool(swing_mode_modes) and swing_mode_modes.issubset(
+            self._device.swing_mode_supported_modes
+        )
+        if swing_mode_available:
+            self._attr_supported_features |= ClimateEntityFeature.SWING_MODE
+        current_swing_mode = self._current_swing_mode() if swing_mode_available else None
+        self._attr_swing_mode = DAIKIN_TO_SWING_MODE.get(current_swing_mode) if current_swing_mode is not None else None
