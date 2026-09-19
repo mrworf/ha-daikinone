@@ -76,3 +76,9 @@ and cloud writes use the existing authenticated Daikin connection.
 
 Commit this slice's plan, configuration, controller, Heat/Cool integration, connector precision change, diagnostics,
 and focused tests together as one coherent behavior commit.
+
+## Delivery result
+
+- Status: complete.
+- Commit: `d60245a`.
+- Focused validation: 25 tests passed; Pyright reported 0 errors; Ruff passed.

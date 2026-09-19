@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -24,6 +24,7 @@ from .const import (
     EXTERNAL_TEMPERATURE_ADJUSTMENT_MINUTES,
     EXTERNAL_TEMPERATURE_BIAS_STEP,
     EXTERNAL_TEMPERATURE_DEADBAND,
+    EXTERNAL_TEMPERATURE_STALE_MINUTES,
 )
 from .daikinone import DaikinOne, DaikinThermostat, DaikinThermostatMode
 from .utils import Temperature
@@ -31,6 +32,7 @@ from .utils import Temperature
 log = logging.getLogger(__name__)
 
 STORE_VERSION = 1
+COMMAND_PROPAGATION_TIME = timedelta(seconds=45)
 
 
 class ExternalTemperatureStatus(StrEnum):
@@ -40,7 +42,9 @@ class ExternalTemperatureStatus(StrEnum):
     ADAPTING_HEAT = "adapting_heat"
     ADAPTING_COOL = "adapting_cool"
     WAITING_FOR_SENSOR = "waiting_for_sensor"
+    STALE_SENSOR = "stale_sensor"
     LIMITED = "limited"
+    ERROR = "error"
 
 
 @dataclass(frozen=True)
@@ -83,6 +87,9 @@ class AdaptiveHeadState:
     last_adjusted: datetime | None = None
     status: ExternalTemperatureStatus = ExternalTemperatureStatus.MONITORING
     limited: bool = False
+    expected_heat: float | None = None
+    expected_cool: float | None = None
+    pending_until: datetime | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any], thermostat: DaikinThermostat) -> AdaptiveHeadState:
@@ -143,8 +150,10 @@ class ExternalTemperatureController:
             for config in [ExternalTemperatureConfig.from_dict(cast(dict[str, Any], raw))]
         }
         self._heads: dict[str, AdaptiveHeadState] = {}
+        self._cleanup: dict[str, AdaptiveHeadState] = {}
         self._callbacks: dict[str, Callable[[], None]] = {}
         self._unsubscribers: list[Callable[[], None]] = []
+        self._demand_reconciler: Callable[[], Awaitable[None]] | None = None
         self._store: Store[dict[str, Any]] = Store(
             hass,
             STORE_VERSION,
@@ -166,12 +175,24 @@ class ExternalTemperatureController:
             self._heads[thermostat_id] = AdaptiveHeadState.from_dict(
                 cast(dict[str, Any], raw) if isinstance(raw, dict) else {}, thermostat
             )
+            head = self._heads[thermostat_id]
+            head.expected_heat, head.expected_cool = self.physical_targets(thermostat)
+
+        cleanup_value = cast(object, stored.get("cleanup", {}))
+        cleanup = cast(dict[str, object], cleanup_value) if isinstance(cleanup_value, dict) else {}
+        removed_ids = (set(stored_heads) | set(cleanup)) - set(self._configs)
+        for thermostat_id in removed_ids:
+            thermostat = thermostats.get(thermostat_id)
+            raw = cleanup.get(thermostat_id, stored_heads.get(thermostat_id, {}))
+            if thermostat is not None and isinstance(raw, dict):
+                self._cleanup[thermostat_id] = AdaptiveHeadState.from_dict(cast(dict[str, Any], raw), thermostat)
 
         sensor_ids = {config.sensor_entity_id for config in self._configs.values()}
         if sensor_ids:
             self._unsubscribers.append(
                 async_track_state_change_event(self._hass, sensor_ids, self._async_sensor_changed)
             )
+        if sensor_ids or self._cleanup:
             self._unsubscribers.append(
                 async_track_time_interval(self._hass, self._async_periodic_update, timedelta(minutes=1))
             )
@@ -181,6 +202,10 @@ class ExternalTemperatureController:
     def register(self, thermostat_id: str, callback: Callable[[], None]) -> None:
         """Register a climate entity callback."""
         self._callbacks[thermostat_id] = callback
+
+    def set_demand_reconciler(self, callback: Callable[[], Awaitable[None]]) -> None:
+        """Arrange for emulated demand to be refreshed before adaptive learning."""
+        self._demand_reconciler = callback
 
     def unregister(self, thermostat_id: str) -> None:
         """Unregister a climate entity callback."""
@@ -211,6 +236,12 @@ class ExternalTemperatureController:
         sensor_state = self._hass.states.get(config.sensor_entity_id)
         if sensor_state is None or sensor_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
             return None
+        last_updated = getattr(sensor_state, "last_updated", None)
+        if isinstance(last_updated, datetime):
+            if last_updated.tzinfo is None:
+                last_updated = last_updated.replace(tzinfo=UTC)
+            if self._now() - last_updated > timedelta(minutes=EXTERNAL_TEMPERATURE_STALE_MINUTES):
+                return None
         try:
             value = float(sensor_state.state)
         except (TypeError, ValueError):
@@ -226,6 +257,13 @@ class ExternalTemperatureController:
             except ValueError:
                 return None
         return value
+
+    def effective_temperature(self, thermostat: DaikinThermostat) -> float | None:
+        """Return the fresh external reading, falling back to the head sensor."""
+        external = self.external_temperature(thermostat.id)
+        if external is not None:
+            return external
+        return thermostat.indoor_temperature.celsius if thermostat.indoor_temperature_valid else None
 
     def physical_targets(self, thermostat: DaikinThermostat) -> tuple[float, float]:
         """Return bounded physical heat and cool targets."""
@@ -264,8 +302,13 @@ class ExternalTemperatureController:
             thermostat_id,
             heat=Temperature.from_celsius(physical_heat) if heat is not None else None,
             cool=Temperature.from_celsius(physical_cool) if cool is not None else None,
-            override_schedule=thermostat.schedule.enabled,
+            override_schedule=False,
         )
+        if heat is not None:
+            state.expected_heat = physical_heat
+        if cool is not None:
+            state.expected_cool = physical_cool
+        state.pending_until = self._now() + COMMAND_PROPAGATION_TIME
         self._schedule_save()
         self._notify(thermostat_id)
 
@@ -274,12 +317,27 @@ class ExternalTemperatureController:
         if not self._initialized:
             return
         now = self._now()
+        await self._async_cleanup_removed()
         for thermostat_id, state in self._heads.items():
             thermostat = self._daikin.get_thermostat(thermostat_id)
+            try:
+                if thermostat.schedule.enabled:
+                    await self._daikin.set_thermostat_schedule_enabled(thermostat_id, False)
+                    thermostat.schedule.enabled = False
+                self._adopt_manual_setpoints(thermostat, state, now)
+            except Exception:
+                log.exception("Failed to prepare external-temperature control for %s", thermostat_id)
+                state.status = ExternalTemperatureStatus.ERROR
+                self._notify(thermostat_id)
+                continue
             external = self.external_temperature(thermostat_id)
             state.last_evaluated = now
             if external is None:
-                state.status = ExternalTemperatureStatus.WAITING_FOR_SENSOR
+                state.status = (
+                    ExternalTemperatureStatus.STALE_SENSOR
+                    if self._sensor_is_stale(thermostat_id)
+                    else ExternalTemperatureStatus.WAITING_FOR_SENSOR
+                )
                 state.error_sign = 0
                 state.error_since = None
                 self._notify(thermostat_id)
@@ -291,10 +349,60 @@ class ExternalTemperatureController:
                 await self._async_evaluate_direction(thermostat, HVACMode.COOL, state.logical_cool - external, now)
             else:
                 state.status = ExternalTemperatureStatus.MONITORING
+                state.limited = False
                 state.error_sign = 0
                 state.error_since = None
                 self._notify(thermostat_id)
         self._schedule_save()
+
+    def _sensor_is_stale(self, thermostat_id: str) -> bool:
+        config = self._configs.get(thermostat_id)
+        sensor_state = self._hass.states.get(config.sensor_entity_id) if config is not None else None
+        last_updated = getattr(sensor_state, "last_updated", None)
+        if not isinstance(last_updated, datetime):
+            return False
+        if last_updated.tzinfo is None:
+            last_updated = last_updated.replace(tzinfo=UTC)
+        return self._now() - last_updated > timedelta(minutes=EXTERNAL_TEMPERATURE_STALE_MINUTES)
+
+    def _adopt_manual_setpoints(self, thermostat: DaikinThermostat, state: AdaptiveHeadState, now: datetime) -> None:
+        """Turn confirmed out-of-band physical changes into new logical targets."""
+        if state.pending_until is not None and now < state.pending_until:
+            return
+        reported_heat = thermostat.set_point_heat.celsius
+        reported_cool = thermostat.set_point_cool.celsius
+        if state.expected_heat is not None and abs(reported_heat - state.expected_heat) > 0.01:
+            state.logical_heat = _round_half(
+                max(
+                    thermostat.set_point_heat_min.celsius,
+                    min(thermostat.set_point_heat_max.celsius, reported_heat - state.heat_bias),
+                )
+            )
+        if state.expected_cool is not None and abs(reported_cool - state.expected_cool) > 0.01:
+            state.logical_cool = _round_half(
+                max(
+                    thermostat.set_point_cool_min.celsius,
+                    min(thermostat.set_point_cool_max.celsius, reported_cool - state.cool_bias),
+                )
+            )
+        state.expected_heat = reported_heat
+        state.expected_cool = reported_cool
+        state.pending_until = None
+
+    async def _async_cleanup_removed(self) -> None:
+        """Restore unbiased logical targets for heads removed from configuration."""
+        for thermostat_id, state in list(self._cleanup.items()):
+            try:
+                await self._daikin.set_thermostat_home_set_points(
+                    thermostat_id,
+                    heat=Temperature.from_celsius(state.logical_heat),
+                    cool=Temperature.from_celsius(state.logical_cool),
+                    override_schedule=False,
+                )
+            except Exception:
+                log.exception("Failed to remove external-temperature bias from %s; retrying later", thermostat_id)
+                continue
+            self._cleanup.pop(thermostat_id)
 
     async def _async_evaluate_direction(
         self,
@@ -306,6 +414,7 @@ class ExternalTemperatureController:
         state = self._heads[thermostat.id]
         if abs(error) <= EXTERNAL_TEMPERATURE_DEADBAND:
             state.status = ExternalTemperatureStatus.MONITORING
+            state.limited = False
             state.error_sign = 0
             state.error_since = None
             self._notify(thermostat.id)
@@ -320,6 +429,7 @@ class ExternalTemperatureController:
                 if direction is HVACMode.HEAT
                 else ExternalTemperatureStatus.ADAPTING_COOL
             )
+            state.limited = False
             self._notify(thermostat.id)
             return
         if now - state.error_since < timedelta(minutes=EXTERNAL_TEMPERATURE_ADJUSTMENT_MINUTES):
@@ -354,23 +464,31 @@ class ExternalTemperatureController:
             await self._daikin.set_thermostat_home_set_points(
                 thermostat.id,
                 heat=Temperature.from_celsius(new_physical[0]),
-                override_schedule=thermostat.schedule.enabled,
+                override_schedule=False,
             )
+            state.expected_heat = new_physical[0]
         else:
             await self._daikin.set_thermostat_home_set_points(
                 thermostat.id,
                 cool=Temperature.from_celsius(new_physical[1]),
-                override_schedule=thermostat.schedule.enabled,
+                override_schedule=False,
             )
+            state.expected_cool = new_physical[1]
+        state.pending_until = now + COMMAND_PROPAGATION_TIME
         state.last_adjusted = now
+        state.limited = False
         self._notify(thermostat.id)
 
     async def _async_sensor_changed(self, event: Event[EventStateChangedData]) -> None:
         del event
+        if self._demand_reconciler is not None:
+            await self._demand_reconciler()
         await self.async_reconcile()
 
     async def _async_periodic_update(self, now: datetime) -> None:
         del now
+        if self._demand_reconciler is not None:
+            await self._demand_reconciler()
         await self.async_reconcile()
 
     def _notify(self, thermostat_id: str) -> None:
@@ -380,7 +498,10 @@ class ExternalTemperatureController:
 
     def _schedule_save(self) -> None:
         self._store.async_delay_save(
-            lambda: {"heads": {thermostat_id: state.as_dict() for thermostat_id, state in self._heads.items()}},
+            lambda: {
+                "heads": {thermostat_id: state.as_dict() for thermostat_id, state in self._heads.items()},
+                "cleanup": {thermostat_id: state.as_dict() for thermostat_id, state in self._cleanup.items()},
+            },
             60,
         )
 
@@ -389,7 +510,10 @@ class ExternalTemperatureController:
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
-        if self._heads:
+        if self._heads or self._cleanup:
             await self._store.async_save(
-                {"heads": {thermostat_id: state.as_dict() for thermostat_id, state in self._heads.items()}}
+                {
+                    "heads": {thermostat_id: state.as_dict() for thermostat_id, state in self._heads.items()},
+                    "cleanup": {thermostat_id: state.as_dict() for thermostat_id, state in self._cleanup.items()},
+                }
             )

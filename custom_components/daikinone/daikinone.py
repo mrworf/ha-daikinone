@@ -536,6 +536,16 @@ class DaikinOne:
             if auto is not None:
                 thermostat.set_point_auto = auto
 
+    async def set_thermostat_schedule_enabled(self, thermostat_id: str, enabled: bool) -> None:
+        """Enable or disable the thermostat's native schedule."""
+        await self.__req(
+            url=f"{DAIKIN_API_URL_DEVICE_DATA}/{thermostat_id}",
+            method="PUT",
+            body={"schedEnabled": enabled},
+        )
+        if thermostat_id in self.__thermostats:
+            self.__thermostats[thermostat_id].schedule.enabled = enabled
+
     async def set_thermostat_fan_mode(self, thermostat_id: str, fan_mode: DaikinThermostatFanMode) -> None:
         """Set thermostat fan mode"""
         await self.__req(

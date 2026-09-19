@@ -34,9 +34,9 @@ adjustment timestamps, and limit status.
 ## Slices
 
 1. `20260919122403_external_temperature_control_slice_01.md` - Optional controller, configuration, persistence, and
-   adaptive Heat/Cool behavior.
+   adaptive Heat/Cool behavior. Delivered in `d60245a`.
 2. `20260919122403_external_temperature_control_slice_02.md` - Emulated Heat/Cool integration, stale/manual/schedule
-   recovery, documentation, and full validation.
+   recovery, documentation, and full validation. Delivered in the commit containing this final plan update.
 
 ## Acceptance
 

@@ -66,6 +66,31 @@ default. Physical remote Heat, Cool, and Off commands leave emulated mode and ar
 respected after the integration has distinguished them from a recently sent
 cloud command.
 
+### Optional external room temperature
+
+The integration can use any Home Assistant temperature sensor as the room
+temperature for an individual head. Open the integration's **Configure** dialog,
+choose **External temperature sensors**, select the head and sensor, and set the
+maximum allowed bias. The default maximum is 5 °C.
+
+In Heat, Cool, and emulated Heat/Cool, Home Assistant keeps showing the desired
+logical target. The integration slowly learns a separate heating and cooling
+bias and sends a different physical target to the Daikin head. It adjusts by
+0.5 °C only after the room remains more than 0.3 °C from target for 15 minutes,
+and keeps relearning while enabled so seasonal or room changes do not leave a
+stale calibration. This retains the head's own inverter control instead of
+turning it into a binary on/off device. Native Daikin Auto and Emergency Heat
+are not adaptively biased.
+
+While enabled, Home Assistant disables that head's native Daikin schedule and
+owns its logical target. A target changed on a Daikin controller or remote is
+adopted as the new logical target after cloud-command propagation is ruled out.
+If the external sensor is unavailable or has not updated for 30 minutes, the
+current learned bias and physical target are frozen and Home Assistant falls
+back to displaying and using the head's internal temperature. Removing the
+external-sensor configuration restores the unbiased logical heat and cool
+targets; it does not re-enable the Daikin schedule automatically.
+
 <!-- markdownlint-disable-next-line no-inline-html -->
 <img src="docs/dashboard.png" width="350" alt="dashboard example">
 

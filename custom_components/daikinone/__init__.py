@@ -33,8 +33,11 @@ class DaikinOneData:
     external_temperature: ExternalTemperatureController = field(init=False)
 
     def __post_init__(self) -> None:
-        self.emulation = DaikinEmulationController(self._hass, self.entry, self.daikin)
         self.external_temperature = ExternalTemperatureController(self._hass, self.entry, self.daikin)
+        self.emulation = DaikinEmulationController(
+            self._hass, self.entry, self.daikin, external_temperature=self.external_temperature
+        )
+        self.external_temperature.set_demand_reconciler(self.emulation.async_reconcile)
 
     async def update(self, no_throttle: bool = False) -> None:
         """Get the latest data from Daikin cloud"""
@@ -48,8 +51,8 @@ class DaikinOneData:
         """
         log.debug("Updating Daikin One data from cloud")
         await self.daikin.update()
-        await self.external_temperature.async_reconcile()
         await self.emulation.async_reconcile()
+        await self.external_temperature.async_reconcile()
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

@@ -274,6 +274,20 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             heat = Temperature.from_celsius(target_temp_low)
             cool = Temperature.from_celsius(target_temp_high)
 
+            if self._data.external_temperature.configured(self._device.id):
+                await self._data.external_temperature.async_set_logical_targets(
+                    self._device.id,
+                    heat=heat.celsius,
+                    cool=cool.celsius,
+                )
+                self._device = self._data.daikin.get_thermostat(self._device.id)
+                if hvac_mode is HVACMode.HEAT_COOL:
+                    await self.async_set_hvac_mode(HVACMode.HEAT_COOL)
+                else:
+                    await self._data.emulation.async_reconcile()
+                self.update_entity_attributes()
+                return
+
             def update_range(t: DaikinThermostat) -> None:
                 t.set_point_heat = heat
                 t.set_point_cool = cool
@@ -424,17 +438,20 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
 
     def update_entity_attributes(self) -> None:
         self._attr_available = self._device.online
+        logical_mode = self._data.emulation.logical_mode(self._device.id)
         external_temperature = self._data.external_temperature.external_temperature(self._device.id)
         self._attr_current_temperature = (
             external_temperature
-            if self._data.external_temperature.configured(self._device.id) and external_temperature is not None
+            if self._data.external_temperature.configured(self._device.id)
+            and logical_mode in (HVACMode.HEAT, HVACMode.COOL, HVACMode.HEAT_COOL)
+            and self._device.mode is not DaikinThermostatMode.AUX_HEAT
+            and external_temperature is not None
             else self._device.indoor_temperature.celsius
         )
         self._attr_current_humidity = self._device.indoor_humidity
 
         # hvac current mode and preset
         self._attr_preset_mode = DaikinOneThermostatPresetMode.NONE.value
-        logical_mode = self._data.emulation.logical_mode(self._device.id)
         if logical_mode is HVACMode.HEAT_COOL:
             self._attr_hvac_mode = HVACMode.HEAT_COOL
         else:
@@ -475,8 +492,8 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         self._attr_target_temperature_high = None
 
         if logical_mode is HVACMode.HEAT_COOL:
-            self._attr_target_temperature_low = self._device.set_point_heat.celsius
-            self._attr_target_temperature_high = self._device.set_point_cool.celsius
+            self._attr_target_temperature_low = self._data.external_temperature.logical_heat(self._device)
+            self._attr_target_temperature_high = self._data.external_temperature.logical_cool(self._device)
         else:
             match self._device.mode:
                 case DaikinThermostatMode.HEAT | DaikinThermostatMode.AUX_HEAT:

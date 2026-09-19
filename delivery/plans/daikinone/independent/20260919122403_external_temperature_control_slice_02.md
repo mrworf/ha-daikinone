@@ -75,3 +75,10 @@ No new authorization boundary is introduced. Schedule and setpoint writes use th
 
 Commit Heat/Cool integration, recovery/manual/schedule behavior, documentation, and all related tests together as the
 second coherent behavior commit.
+
+## Delivery result
+
+- Status: complete.
+- Slice 01 dependency: `d60245a`.
+- Slice 02 commit: the commit containing this delivery result.
+- Validation: 47 tests passed; Pyright reported 0 errors; Ruff passed; Black left all 13 component files unchanged.

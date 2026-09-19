@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 import logging
+from typing import TYPE_CHECKING
 
 from homeassistant.components import persistent_notification
 from homeassistant.components.climate.const import HVACMode
@@ -24,6 +25,9 @@ from .const import (
     DOMAIN,
 )
 from .daikinone import DaikinOne, DaikinThermostat, DaikinThermostatCapability, DaikinThermostatMode
+
+if TYPE_CHECKING:
+    from .external_temperature import ExternalTemperatureController
 
 log = logging.getLogger(__name__)
 
@@ -102,11 +106,13 @@ class DaikinEmulationController:
         hass: HomeAssistant,
         entry: ConfigEntry,
         daikin: DaikinOne,
+        external_temperature: ExternalTemperatureController | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._hass = hass
         self._entry = entry
         self._daikin = daikin
+        self._external_temperature = external_temperature
         self._heads: dict[str, HeadControl] = {}
         self._groups: dict[str, GroupControl] = {}
         self._lock = asyncio.Lock()
@@ -310,7 +316,7 @@ class DaikinEmulationController:
         suspended: list[str] = []
         if manual_auto or len(manual_directions) > 1:
             for member in emulated:
-                if not member.online or not member.indoor_temperature_valid:
+                if not member.online or not self._temperature_available(member):
                     continue
                 await self._async_apply(member, DaikinThermostatMode.OFF)
                 self._heads[member.id].status = EmulationStatus.SUSPENDED_BY_MANUAL_CONTROL
@@ -322,7 +328,7 @@ class DaikinEmulationController:
             self._set_group_direction(group_id, direction, now)
             for member in emulated:
                 record = self._heads[member.id]
-                if not member.online or not member.indoor_temperature_valid:
+                if not member.online or not self._temperature_available(member):
                     continue
                 if record.demand is not direction:
                     await self._async_apply(member, DaikinThermostatMode.OFF)
@@ -333,7 +339,7 @@ class DaikinEmulationController:
                         record.status = EmulationStatus.IDLE
             for member in emulated:
                 record = self._heads[member.id]
-                if member.online and member.indoor_temperature_valid and record.demand is direction:
+                if member.online and self._temperature_available(member) and record.demand is direction:
                     await self._async_apply_direction(member, direction)
             return suspended
 
@@ -341,7 +347,7 @@ class DaikinEmulationController:
             physical_directions = {
                 direction
                 for member in emulated
-                if member.online and member.indoor_temperature_valid
+                if member.online and self._temperature_available(member)
                 if (direction := mode_direction(self._heads[member.id].expected_mode)) is not None
             }
             if len(physical_directions) > 1:
@@ -351,7 +357,7 @@ class DaikinEmulationController:
                     off_cycle_pending=True,
                 )
                 for member in emulated:
-                    if member.online and member.indoor_temperature_valid:
+                    if member.online and self._temperature_available(member):
                         await self._async_apply(member, DaikinThermostatMode.OFF)
                         self._set_waiting_status(member, EmulationStatus.WAITING_FOR_DWELL)
                 return []
@@ -365,14 +371,14 @@ class DaikinEmulationController:
 
         if group.off_cycle_pending:
             for member in emulated:
-                if not member.online or not member.indoor_temperature_valid:
+                if not member.online or not self._temperature_available(member):
                     continue
                 await self._async_apply(member, DaikinThermostatMode.OFF)
                 self._set_waiting_status(member, EmulationStatus.WAITING_FOR_DWELL)
             if any(
                 self._heads[member.id].pending_until is not None or member.mode is not DaikinThermostatMode.OFF
                 for member in emulated
-                if member.online and member.indoor_temperature_valid
+                if member.online and self._temperature_available(member)
             ):
                 return []
             group.off_cycle_pending = False
@@ -388,7 +394,7 @@ class DaikinEmulationController:
                 group.pending_direction = winner
                 group.off_cycle_pending = True
                 for member in emulated:
-                    if not member.online or not member.indoor_temperature_valid:
+                    if not member.online or not self._temperature_available(member):
                         continue
                     await self._async_apply(member, DaikinThermostatMode.OFF)
                     self._set_waiting_status(member, EmulationStatus.WAITING_FOR_DWELL)
@@ -401,7 +407,7 @@ class DaikinEmulationController:
 
         for member in emulated:
             record = self._heads[member.id]
-            if not member.online or not member.indoor_temperature_valid:
+            if not member.online or not self._temperature_available(member):
                 continue
             if record.demand is None or record.demand is not selected:
                 await self._async_apply(member, DaikinThermostatMode.OFF)
@@ -415,7 +421,7 @@ class DaikinEmulationController:
             record = self._heads[member.id]
             if (
                 member.online
-                and member.indoor_temperature_valid
+                and self._temperature_available(member)
                 and record.demand is not None
                 and record.demand is selected
             ):
@@ -424,13 +430,21 @@ class DaikinEmulationController:
 
     def _update_demand(self, thermostat: DaikinThermostat) -> None:
         record = self._heads[thermostat.id]
-        if not thermostat.online or not thermostat.indoor_temperature_valid:
+        temperature = self._effective_temperature(thermostat)
+        if not thermostat.online or temperature is None:
             record.demand = None
             record.status = EmulationStatus.WAITING_FOR_DATA
             return
-        temperature = thermostat.indoor_temperature.celsius
-        low = thermostat.set_point_heat.celsius
-        high = thermostat.set_point_cool.celsius
+        low = (
+            self._external_temperature.logical_heat(thermostat)
+            if self._external_temperature is not None
+            else thermostat.set_point_heat.celsius
+        )
+        high = (
+            self._external_temperature.logical_cool(thermostat)
+            if self._external_temperature is not None
+            else thermostat.set_point_cool.celsius
+        )
         if record.demand is Demand.HEAT:
             if temperature >= low:
                 record.demand = None
@@ -446,15 +460,36 @@ class DaikinEmulationController:
         scores = {Demand.HEAT: 0.0, Demand.COOL: 0.0}
         for member in members:
             demand = self._heads[member.id].demand
+            temperature = self._effective_temperature(member)
+            if temperature is None:
+                continue
+            low = (
+                self._external_temperature.logical_heat(member)
+                if self._external_temperature is not None
+                else member.set_point_heat.celsius
+            )
+            high = (
+                self._external_temperature.logical_cool(member)
+                if self._external_temperature is not None
+                else member.set_point_cool.celsius
+            )
             if demand is Demand.HEAT:
-                scores[demand] = max(scores[demand], member.set_point_heat.celsius - member.indoor_temperature.celsius)
+                scores[demand] = max(scores[demand], low - temperature)
             elif demand is Demand.COOL:
-                scores[demand] = max(scores[demand], member.indoor_temperature.celsius - member.set_point_cool.celsius)
+                scores[demand] = max(scores[demand], temperature - high)
         if scores[Demand.HEAT] == 0 and scores[Demand.COOL] == 0:
             return None
         if scores[Demand.HEAT] == scores[Demand.COOL]:
             return current if current is not None else Demand.HEAT
         return max(scores, key=scores.__getitem__)
+
+    def _effective_temperature(self, thermostat: DaikinThermostat) -> float | None:
+        if self._external_temperature is not None:
+            return self._external_temperature.effective_temperature(thermostat)
+        return thermostat.indoor_temperature.celsius if thermostat.indoor_temperature_valid else None
+
+    def _temperature_available(self, thermostat: DaikinThermostat) -> bool:
+        return self._effective_temperature(thermostat) is not None
 
     def _set_group_direction(self, group_id: str, direction: Demand, now: datetime) -> None:
         group = self._groups.setdefault(group_id, GroupControl())

@@ -97,6 +97,7 @@ def make_controller(
     *,
     options: dict[str, Any] | None = None,
     now: list[datetime] | None = None,
+    external_temperature: Any | None = None,
 ) -> tuple[DaikinEmulationController, FakeDaikin]:
     daikin = FakeDaikin(devices)
     entry = cast(ConfigEntry, SimpleNamespace(entry_id="entry", options=options or {}))
@@ -105,6 +106,7 @@ def make_controller(
         cast(HomeAssistant, SimpleNamespace()),
         entry,
         cast(Any, daikin),
+        external_temperature=external_temperature,
         now=lambda: clock[0],
     )
     for device in devices:
@@ -141,6 +143,34 @@ def test_hysteresis_starts_heat_and_stops_at_low_target() -> None:
     asyncio.run(controller.async_reconcile())
     assert daikin.commands[-1] == ("living", DaikinThermostatMode.OFF)
     assert controller.status("living") is EmulationStatus.IDLE
+
+
+def test_emulated_heat_cool_uses_external_temperature_and_logical_range() -> None:
+    class ExternalTemperature:
+        def effective_temperature(self, device: DaikinThermostat) -> float:
+            del device
+            return 26
+
+        def logical_heat(self, device: DaikinThermostat) -> float:
+            del device
+            return 20
+
+        def logical_cool(self, device: DaikinThermostat) -> float:
+            del device
+            return 24
+
+    device = head("living", 21)
+    controller, daikin = make_controller(
+        [device],
+        options={CONF_OPTION_EMULATION_DWELL_MINUTES: 0},
+        external_temperature=ExternalTemperature(),
+    )
+    restore_heat_cool(controller, daikin, "living")
+
+    asyncio.run(controller.async_reconcile())
+
+    assert daikin.commands == [("living", DaikinThermostatMode.COOL)]
+    assert controller.status("living") is EmulationStatus.COOLING
 
 
 def test_largest_deviation_selects_one_group_direction() -> None:
