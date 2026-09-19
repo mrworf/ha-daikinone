@@ -119,6 +119,7 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             self._attr_preset_modes += [DaikinOneThermostatPresetMode.EMERGENCY_HEAT.value]
 
         self._data.emulation.register(thermostat, self._controller_updated)
+        self._data.external_temperature.register(thermostat.id, self._external_controller_updated)
 
     async def async_added_to_hass(self) -> None:
         """Restore logical emulation state after the entity is added."""
@@ -143,10 +144,18 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
     async def async_will_remove_from_hass(self) -> None:
         """Remove controller callbacks when the entity unloads."""
         self._data.emulation.unregister(self._device.id)
+        self._data.external_temperature.unregister(self._device.id)
         await super().async_will_remove_from_hass()
 
     def _controller_updated(self) -> None:
         """Publish logical/controller state after a group reconciliation."""
+        self._device = self._data.daikin.get_thermostat(self._device.id)
+        self.update_entity_attributes()
+        if getattr(self, "entity_id", None):
+            self.async_write_ha_state()
+
+    def _external_controller_updated(self) -> None:
+        """Publish adaptive external-temperature state."""
         self._device = self._data.daikin.get_thermostat(self._device.id)
         self.update_entity_attributes()
         if getattr(self, "entity_id", None):
@@ -319,6 +328,22 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             # it is a heat or cool set point
             temperature = Temperature.from_celsius(temperature)
 
+            if self._data.external_temperature.configured(self._device.id):
+                if self._device.mode is DaikinThermostatMode.HEAT:
+                    await self._data.external_temperature.async_set_logical_targets(
+                        self._device.id, heat=temperature.celsius
+                    )
+                    self._device = self._data.daikin.get_thermostat(self._device.id)
+                    self.update_entity_attributes()
+                    return
+                if self._device.mode is DaikinThermostatMode.COOL:
+                    await self._data.external_temperature.async_set_logical_targets(
+                        self._device.id, cool=temperature.celsius
+                    )
+                    self._device = self._data.daikin.get_thermostat(self._device.id)
+                    self.update_entity_attributes()
+                    return
+
             match self._device.mode:
                 case DaikinThermostatMode.HEAT | DaikinThermostatMode.AUX_HEAT:
                     log.debug("Setting thermostat set point: heat=%s ", temperature)
@@ -399,7 +424,12 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
 
     def update_entity_attributes(self) -> None:
         self._attr_available = self._device.online
-        self._attr_current_temperature = self._device.indoor_temperature.celsius
+        external_temperature = self._data.external_temperature.external_temperature(self._device.id)
+        self._attr_current_temperature = (
+            external_temperature
+            if self._data.external_temperature.configured(self._device.id) and external_temperature is not None
+            else self._device.indoor_temperature.celsius
+        )
         self._attr_current_humidity = self._device.indoor_humidity
 
         # hvac current mode and preset
@@ -450,9 +480,13 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         else:
             match self._device.mode:
                 case DaikinThermostatMode.HEAT | DaikinThermostatMode.AUX_HEAT:
-                    self._attr_target_temperature = self._device.set_point_heat.celsius
+                    self._attr_target_temperature = (
+                        self._data.external_temperature.logical_heat(self._device)
+                        if self._device.mode is DaikinThermostatMode.HEAT
+                        else self._device.set_point_heat.celsius
+                    )
                 case DaikinThermostatMode.COOL:
-                    self._attr_target_temperature = self._device.set_point_cool.celsius
+                    self._attr_target_temperature = self._data.external_temperature.logical_cool(self._device)
                 case DaikinThermostatMode.AUTO:
                     self._attr_target_temperature = self._device.set_point_auto.celsius
                 case _:
@@ -464,6 +498,30 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         }
         if emulation_status is not None:
             self._attr_extra_state_attributes["emulation_status"] = emulation_status.value
+
+        external_state = self._data.external_temperature.state(self._device.id)
+        external_config = self._data.external_temperature.config(self._device.id)
+        if external_state is not None and external_config is not None:
+            physical_heat, physical_cool = self._data.external_temperature.physical_targets(self._device)
+            self._attr_extra_state_attributes.update(
+                {
+                    "internal_temperature": self._device.indoor_temperature.celsius,
+                    "external_temperature_sensor": external_config.sensor_entity_id,
+                    "external_temperature": external_temperature,
+                    "external_control_status": external_state.status.value,
+                    "heating_bias": external_state.heat_bias,
+                    "cooling_bias": external_state.cool_bias,
+                    "physical_heat_target": physical_heat,
+                    "physical_cool_target": physical_cool,
+                    "bias_last_evaluated": (
+                        external_state.last_evaluated.isoformat() if external_state.last_evaluated else None
+                    ),
+                    "bias_last_adjusted": (
+                        external_state.last_adjusted.isoformat() if external_state.last_adjusted else None
+                    ),
+                    "setpoint_limited": external_state.limited,
+                }
+            )
 
         # temperature bounds
         # these should be the same but just in case, take the larger of the two for the min

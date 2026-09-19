@@ -19,6 +19,7 @@ from custom_components.daikinone.const import (
 )
 from custom_components.daikinone.daikinone import DaikinOne, DaikinUserCredentials
 from custom_components.daikinone.emulation import DaikinEmulationController
+from custom_components.daikinone.external_temperature import ExternalTemperatureController
 
 log = logging.getLogger(__name__)
 
@@ -29,9 +30,11 @@ class DaikinOneData:
     entry: ConfigEntry
     daikin: DaikinOne
     emulation: DaikinEmulationController = field(init=False)
+    external_temperature: ExternalTemperatureController = field(init=False)
 
     def __post_init__(self) -> None:
         self.emulation = DaikinEmulationController(self._hass, self.entry, self.daikin)
+        self.external_temperature = ExternalTemperatureController(self._hass, self.entry, self.daikin)
 
     async def update(self, no_throttle: bool = False) -> None:
         """Get the latest data from Daikin cloud"""
@@ -45,6 +48,7 @@ class DaikinOneData:
         """
         log.debug("Updating Daikin One data from cloud")
         await self.daikin.update()
+        await self.external_temperature.async_reconcile()
         await self.emulation.async_reconcile()
 
 
@@ -95,6 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ),
     )
     await data.update()
+    await data.external_temperature.async_initialize()
 
     if data.daikin.heat_pump_groups_inferred:
         hass.config_entries.async_update_entry(
@@ -120,6 +125,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload the config entry and platforms"""
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if ok:
+        await hass.data[DOMAIN].external_temperature.async_shutdown()
         await hass.data[DOMAIN].emulation.async_shutdown()
         hass.data.pop(DOMAIN)
     return ok

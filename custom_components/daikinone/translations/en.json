@@ -22,6 +22,7 @@
           "edit_group": "Edit a heat pump",
           "add_group": "Add a heat pump",
           "emulation_settings": "Emulated Heat/Cool settings",
+          "external_temperature": "External temperature sensors",
           "finish": "Save changes"
         }
       },
@@ -48,6 +49,22 @@
           "emulation_dwell_minutes": "Minimum direction time (minutes)",
           "convert_external_auto": "Convert external Daikin Auto to emulated Heat/Cool"
         }
+      },
+      "external_temperature": {
+        "title": "Configure an external temperature sensor",
+        "description": "Select an indoor head to configure or disable adaptive external-temperature control.",
+        "data": {
+          "thermostat_id": "Indoor head"
+        }
+      },
+      "external_temperature_head": {
+        "title": "External temperature control for {head}",
+        "description": "Home Assistant will display the selected sensor and slowly adapt the physical Daikin setpoint. The Daikin controller may show a different target.",
+        "data": {
+          "sensor_entity_id": "Temperature sensor",
+          "max_bias": "Maximum setpoint bias",
+          "delete_external_control": "Disable external temperature control"
+        }
       }
     },
     "error": {
@@ -55,7 +72,8 @@
       "empty_members": "Select at least one indoor head.",
       "unknown_head": "One or more selected heads are no longer available.",
       "different_locations": "All selected heads must be in the same Daikin location.",
-      "duplicate_head": "An indoor head can belong to only one heat pump."
+      "duplicate_head": "An indoor head can belong to only one heat pump.",
+      "not_temperature_sensor": "Select an available sensor with the temperature device class."
     }
   },
   "exceptions": {

@@ -21,6 +21,36 @@ from custom_components.daikinone.daikinone import (
 from custom_components.daikinone.utils import Temperature
 
 
+class NullExternalTemperature:
+    def register(self, thermostat_id: str, callback: Any) -> None:
+        del thermostat_id, callback
+
+    def unregister(self, thermostat_id: str) -> None:
+        del thermostat_id
+
+    def configured(self, thermostat_id: str) -> bool:
+        del thermostat_id
+        return False
+
+    def external_temperature(self, thermostat_id: str) -> None:
+        del thermostat_id
+        return None
+
+    def logical_heat(self, device: DaikinThermostat) -> float:
+        return device.set_point_heat.celsius
+
+    def logical_cool(self, device: DaikinThermostat) -> float:
+        return device.set_point_cool.celsius
+
+    def state(self, thermostat_id: str) -> None:
+        del thermostat_id
+        return None
+
+    def config(self, thermostat_id: str) -> None:
+        del thermostat_id
+        return None
+
+
 def thermostat(mode: DaikinThermostatMode = DaikinThermostatMode.AUTO) -> DaikinThermostat:
     return DaikinThermostat(
         id="head",
@@ -93,7 +123,14 @@ def climate_entity(device: DaikinThermostat, connector: Any | None = None) -> Da
                 DaikinThermostatMode.OFF: HVACMode.OFF,
             }.get(mode, HVACMode.HEAT)
 
-    data = cast(Any, SimpleNamespace(daikin=daikin, emulation=FakeEmulation()))
+    data = cast(
+        Any,
+        SimpleNamespace(
+            daikin=daikin,
+            emulation=FakeEmulation(),
+            external_temperature=NullExternalTemperature(),
+        ),
+    )
     return DaikinOneThermostat(
         ClimateEntityDescription(key=device.id, has_entity_name=True, name=None),
         data,
@@ -144,7 +181,7 @@ def test_connector_setpoint_payload_supports_auto_and_rejects_empty() -> None:
     connector._DaikinOne__req = request  # type: ignore[attr-defined]
 
     asyncio.run(connector.set_thermostat_home_set_points("head", auto=Temperature.from_celsius(22.4)))
-    assert requests[0]["body"] == {"iduAutoSetpoint": 22}
+    assert requests[0]["body"] == {"iduAutoSetpoint": 22.5}
 
     with pytest.raises(ValueError, match="At least one"):
         asyncio.run(connector.set_thermostat_home_set_points("head"))

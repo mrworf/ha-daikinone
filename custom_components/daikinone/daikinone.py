@@ -513,11 +513,11 @@ class DaikinOne:
 
         payload: dict[str, Any] = {}
         if heat is not None:
-            payload["iduHeatSetpoint"] = round(heat.celsius)
+            payload["iduHeatSetpoint"] = round(heat.celsius * 2) / 2
         if cool is not None:
-            payload["iduCoolSetpoint"] = round(cool.celsius)
+            payload["iduCoolSetpoint"] = round(cool.celsius * 2) / 2
         if auto is not None:
-            payload["iduAutoSetpoint"] = round(auto.celsius)
+            payload["iduAutoSetpoint"] = round(auto.celsius * 2) / 2
 
         if override_schedule:
             payload["schedOverride"] = 1

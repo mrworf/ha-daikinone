@@ -1,29 +1,34 @@
 import logging
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.components.sensor.const import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import selector
 
 from .const import (
     CONF_OPTION_ENTITY_UID_SCHEMA_VERSION_KEY,
     CONF_OPTION_CONVERT_EXTERNAL_AUTO,
     CONF_OPTION_EMULATION_DWELL_MINUTES,
     CONF_OPTION_EMULATION_TOLERANCE,
+    CONF_OPTION_EXTERNAL_TEMPERATURE_CONTROLS,
     CONF_OPTION_HEAT_PUMP_GROUPS_KEY,
     CONF_OPTION_HEAT_PUMP_GROUPS_SCHEMA_VERSION_KEY,
     DOMAIN,
     DEFAULT_CONVERT_EXTERNAL_AUTO,
     DEFAULT_EMULATION_DWELL_MINUTES,
     DEFAULT_EMULATION_TOLERANCE,
+    DEFAULT_EXTERNAL_TEMPERATURE_MAX_BIAS,
     HEAT_PUMP_GROUPS_SCHEMA_VERSION,
 )
 from .daikinone import DaikinHeatPumpGroup, DaikinOne, DaikinUserCredentials
+from .external_temperature import ExternalTemperatureConfig
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +39,10 @@ CONF_DELETE_GROUP = "delete_group"
 CONF_EMULATION_TOLERANCE = "emulation_tolerance"
 CONF_EMULATION_DWELL_MINUTES = "emulation_dwell_minutes"
 CONF_CONVERT_EXTERNAL_AUTO = "convert_external_auto"
+CONF_THERMOSTAT_ID = "thermostat_id"
+CONF_SENSOR_ENTITY_ID = "sensor_entity_id"
+CONF_MAX_BIAS = "max_bias"
+CONF_DELETE_EXTERNAL_CONTROL = "delete_external_control"
 
 
 def validate_heat_pump_group(
@@ -116,6 +125,7 @@ class DaikinOneOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
             DaikinHeatPumpGroup.from_dict(group) for group in self.options.get(CONF_OPTION_HEAT_PUMP_GROUPS_KEY, [])
         ]
         self._selected_group_id: str | None = None
+        self._selected_thermostat_id: str | None = None
         self._removed_group_ids: set[str] = set()
         self._emulation_tolerance = float(
             self.options.get(CONF_OPTION_EMULATION_TOLERANCE, DEFAULT_EMULATION_TOLERANCE)
@@ -126,6 +136,12 @@ class DaikinOneOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
         self._convert_external_auto = bool(
             self.options.get(CONF_OPTION_CONVERT_EXTERNAL_AUTO, DEFAULT_CONVERT_EXTERNAL_AUTO)
         )
+        self._external_controls = {
+            config.thermostat_id: config
+            for raw in self.options.get(CONF_OPTION_EXTERNAL_TEMPERATURE_CONTROLS, [])
+            if isinstance(raw, dict)
+            for config in [ExternalTemperatureConfig.from_dict(cast(dict[str, Any], raw))]
+        }
 
     @property
     def _connector(self) -> DaikinOne:
@@ -147,9 +163,15 @@ class DaikinOneOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
             if thermostat.id in candidates
         }
 
+    def _thermostat_options(self) -> dict[str, str]:
+        return {
+            thermostat.id: thermostat.name
+            for thermostat in sorted(self._connector.get_thermostats().values(), key=lambda item: item.name.lower())
+        }
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Show grouping actions."""
-        menu_options = ["add_group", "emulation_settings", "finish"]
+        menu_options = ["add_group", "emulation_settings", "external_temperature", "finish"]
         if self._groups:
             menu_options.insert(0, "edit_group")
         return self.async_show_menu(step_id="init", menu_options=menu_options)
@@ -179,6 +201,79 @@ class DaikinOneOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
                     CONF_CONVERT_EXTERNAL_AUTO: self._convert_external_auto,
                 },
             ),
+        )
+
+    async def async_step_external_temperature(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Select a head for optional external-temperature control."""
+        if user_input is not None:
+            self._selected_thermostat_id = str(user_input[CONF_THERMOSTAT_ID])
+            return await self.async_step_external_temperature_head()
+        return self.async_show_form(
+            step_id="external_temperature",
+            data_schema=vol.Schema({vol.Required(CONF_THERMOSTAT_ID): vol.In(self._thermostat_options())}),
+        )
+
+    async def async_step_external_temperature_head(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Configure one head's external sensor and bias limit."""
+        thermostat_id = self._selected_thermostat_id
+        if thermostat_id is None or thermostat_id not in self._thermostat_options():
+            return self.async_abort(reason="unknown_head")
+        existing = self._external_controls.get(thermostat_id)
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if existing is not None and bool(user_input.get(CONF_DELETE_EXTERNAL_CONTROL, False)):
+                self._external_controls.pop(thermostat_id, None)
+                self._selected_thermostat_id = None
+                return await self.async_step_init()
+            sensor_entity_id = str(user_input[CONF_SENSOR_ENTITY_ID])
+            sensor_state = self.hass.states.get(sensor_entity_id)
+            attributes = (
+                cast(
+                    dict[str, Any],
+                    cast(object, sensor_state.attributes),  # pyright: ignore[reportUnknownMemberType]
+                )
+                if sensor_state is not None
+                else {}
+            )
+            if sensor_state is None or attributes.get("device_class") != SensorDeviceClass.TEMPERATURE:
+                errors[CONF_SENSOR_ENTITY_ID] = "not_temperature_sensor"
+            if not errors:
+                self._external_controls[thermostat_id] = ExternalTemperatureConfig(
+                    thermostat_id=thermostat_id,
+                    sensor_entity_id=sensor_entity_id,
+                    max_bias=float(user_input[CONF_MAX_BIAS]),
+                )
+                self._selected_thermostat_id = None
+                return await self.async_step_init()
+
+        schema: dict[vol.Marker, Any] = {
+            vol.Required(CONF_SENSOR_ENTITY_ID): selector.EntitySelector(  # pyright: ignore[reportUnknownMemberType]
+                selector.EntitySelectorConfig(domain="sensor", device_class=SensorDeviceClass.TEMPERATURE)
+            ),
+            vol.Required(CONF_MAX_BIAS): selector.NumberSelector(  # pyright: ignore[reportUnknownMemberType]
+                selector.NumberSelectorConfig(
+                    min=0.5,
+                    max=10.0,
+                    step=0.5,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="°C",
+                )
+            ),
+        }
+        if existing is not None:
+            schema[vol.Optional(CONF_DELETE_EXTERNAL_CONTROL)] = bool
+        return self.async_show_form(
+            step_id="external_temperature_head",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(schema),
+                {
+                    CONF_SENSOR_ENTITY_ID: existing.sensor_entity_id if existing else None,
+                    CONF_MAX_BIAS: existing.max_bias if existing else DEFAULT_EXTERNAL_TEMPERATURE_MAX_BIAS,
+                    CONF_DELETE_EXTERNAL_CONTROL: False,
+                },
+            ),
+            errors=errors,
+            description_placeholders={"head": self._thermostat_options()[thermostat_id]},
         )
 
     async def async_step_edit_group(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -272,5 +367,9 @@ class DaikinOneOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
                 CONF_OPTION_EMULATION_TOLERANCE: self._emulation_tolerance,
                 CONF_OPTION_EMULATION_DWELL_MINUTES: self._emulation_dwell_minutes,
                 CONF_OPTION_CONVERT_EXTERNAL_AUTO: self._convert_external_auto,
+                CONF_OPTION_EXTERNAL_TEMPERATURE_CONTROLS: [
+                    config.as_dict()
+                    for config in sorted(self._external_controls.values(), key=lambda item: item.thermostat_id)
+                ],
             },
         )

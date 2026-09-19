@@ -30,7 +30,7 @@ from custom_components.daikinone.const import (
 from custom_components.daikinone.daikinone import DaikinThermostat, DaikinThermostatMode
 from custom_components.daikinone.emulation import DaikinEmulationController, EmulationStatus
 from custom_components.daikinone.utils import Temperature
-from test_climate import thermostat
+from test_climate import NullExternalTemperature, thermostat
 
 
 class FakeDaikin:
@@ -308,7 +308,14 @@ def test_unassigned_known_mini_split_does_not_advertise_or_enable_heat_cool() ->
     device = head("unassigned", 21, heat_pump_id=None)
     controller, daikin = make_controller([device])
     daikin.candidates.add(device.id)
-    data = cast(Any, SimpleNamespace(daikin=daikin, emulation=controller))
+    data = cast(
+        Any,
+        SimpleNamespace(
+            daikin=daikin,
+            emulation=controller,
+            external_temperature=NullExternalTemperature(),
+        ),
+    )
     entity = DaikinOneThermostat(
         ClimateEntityDescription(key=device.id, has_entity_name=True, name=None),
         data,
@@ -362,7 +369,14 @@ def test_command_failure_does_not_block_another_group() -> None:
 def test_climate_exposes_heat_cool_range_and_rejects_incomplete_range() -> None:
     device = head("living", 21)
     controller, daikin = make_controller([device])
-    data = cast(Any, SimpleNamespace(daikin=daikin, emulation=controller))
+    data = cast(
+        Any,
+        SimpleNamespace(
+            daikin=daikin,
+            emulation=controller,
+            external_temperature=NullExternalTemperature(),
+        ),
+    )
     entity = DaikinOneThermostat(
         ClimateEntityDescription(key=device.id, has_entity_name=True, name=None),
         data,
