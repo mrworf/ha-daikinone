@@ -60,3 +60,9 @@ No new authority is introduced. Writes use the existing authenticated Daikin dev
 
 Commit the plan, complete vertical-vane behavior, tests, and documentation as one semantic payload, followed only
 by the exact-SHA provenance closeout.
+
+## Completion
+
+- Status: complete.
+- Payload commit: `f53a4fd2d19482e2a2dd7b6192daa3a3c8b71c33`.
+- Validation: 71 tests passed; Pyright, Ruff, Black, JSON parsing, and Git whitespace checks passed.

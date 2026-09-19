@@ -22,4 +22,5 @@ mode-specific fields and values confirmed by the Daikin application and the capt
 ## Transaction
 
 - Parent commit: `d665c1738d2ad228ee495cacddd07cf6166aee04`.
-- Payload commit: recorded by the provenance closeout after delivery.
+- Payload commit: `f53a4fd2d19482e2a2dd7b6192daa3a3c8b71c33`.
+- Slice status: complete.
