@@ -684,12 +684,12 @@ class DaikinOne:
                     )
                     return None
 
-            capabilities = set(DaikinThermostatCapability)
+            capabilities: set[DaikinThermostatCapability] = set()
             if payload.data.get("ctSystemCapHeat") or payload.data.get("iduHeatSetpoint"):
                 capabilities.add(DaikinThermostatCapability.HEAT)
             if payload.data.get("ctSystemCapCool") or payload.data.get("iduCoolSetpoint"):
                 capabilities.add(DaikinThermostatCapability.COOL)
-            if payload.data.get("ctSystemCapEmergencyHeat"):
+            if payload.data.get("ctSystemCapEmergencyHeat") or payload.data.get("modeEmHeatAvailable"):
                 capabilities.add(DaikinThermostatCapability.EMERGENCY_HEAT)
 
             # Fields beginning with

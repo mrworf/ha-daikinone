@@ -18,6 +18,7 @@ from custom_components.daikinone.daikinone import (
     DaikinDeviceDataResponse,
     DaikinOne,
     DaikinThermostat,
+    DaikinThermostatCapability,
     DaikinThermostatCirculationMode,
     DaikinThermostatCirculationSpeed,
     DaikinThermostatFanSpeed,
@@ -96,6 +97,25 @@ def test_mapper_reads_operating_and_optional_circulation_controls(
     assert unknown.operating_fan_speed_supported
     assert unknown.fan_speeds.heat is None
     assert "Ignoring unsupported iduHeatFanSpeed value 99" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("extra", "supported"),
+    [
+        ({}, False),
+        ({"ctSystemCapEmergencyHeat": False}, False),
+        ({"ctSystemCapEmergencyHeat": True}, True),
+        ({"modeEmHeatAvailable": True}, True),
+    ],
+)
+def test_mapper_only_advertises_emergency_heat_when_reported(extra: dict[str, Any], supported: bool) -> None:
+    connector = DaikinOne(DaikinUserCredentials("user@example.invalid", "unused"))
+
+    mapped = map_thermostat(connector, payload("head", extra))
+
+    assert (DaikinThermostatCapability.EMERGENCY_HEAT in mapped.capabilities) is supported
+    assert DaikinThermostatCapability.HEAT in mapped.capabilities
+    assert DaikinThermostatCapability.COOL in mapped.capabilities
 
 
 def test_select_setup_gates_circulation_controls_and_removes_stale_entity(

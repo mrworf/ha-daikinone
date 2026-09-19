@@ -174,6 +174,18 @@ def test_native_auto_exposes_single_target_temperature() -> None:
     assert entity.target_temperature_high is None
 
 
+def test_emergency_heat_preset_is_only_exposed_from_capability() -> None:
+    unsupported = climate_entity(thermostat())
+    supported_device = thermostat()
+    supported_device.capabilities.add(DaikinThermostatCapability.EMERGENCY_HEAT)
+    supported = climate_entity(supported_device)
+
+    assert unsupported.preset_modes == ["none"]
+    assert not unsupported.supported_features & ClimateEntityFeature.PRESET_MODE
+    assert supported.preset_modes == ["none", "emergency_heat"]
+    assert supported.supported_features & ClimateEntityFeature.PRESET_MODE
+
+
 def test_configured_external_readings_are_shown_while_head_is_off() -> None:
     class ExternalReadings(NullExternalTemperature):
         def configured(self, thermostat_id: str) -> bool:
