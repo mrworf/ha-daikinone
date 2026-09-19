@@ -103,8 +103,13 @@
           },
           "fan_mode": {
             "state": {
-              "always_on": "Always on",
-              "schedule": "Scheduled"
+              "auto": "Auto",
+              "quiet": "Quiet",
+              "low": "Low",
+              "medium low": "Medium Low",
+              "medium": "Medium",
+              "medium high": "Medium High",
+              "high": "High"
             }
           }
         }

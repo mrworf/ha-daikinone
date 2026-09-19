@@ -174,16 +174,35 @@ class DaikinThermostatSchedule:
     enabled: bool
 
 
-class DaikinThermostatFanMode(Enum):
+class DaikinThermostatCirculationMode(Enum):
     OFF = 0
     ALWAYS_ON = 1
     SCHEDULED = 2
 
 
-class DaikinThermostatFanSpeed(Enum):
+class DaikinThermostatCirculationSpeed(Enum):
     LOW = 0
     MEDIUM = 1
     HIGH = 2
+
+
+class DaikinThermostatFanSpeed(Enum):
+    LOW = 3
+    MEDIUM_LOW = 4
+    MEDIUM = 5
+    MEDIUM_HIGH = 6
+    HIGH = 7
+    AUTO = 10
+    QUIET = 11
+
+
+@dataclass
+class DaikinThermostatFanSpeeds:
+    heat: DaikinThermostatFanSpeed | None
+    cool: DaikinThermostatFanSpeed | None
+    auto: DaikinThermostatFanSpeed | None
+    dry: DaikinThermostatFanSpeed | None
+    fan: DaikinThermostatFanSpeed | None
 
 
 @dataclass
@@ -193,8 +212,13 @@ class DaikinThermostat(DaikinDevice):
     capabilities: set[DaikinThermostatCapability]
     mode: DaikinThermostatMode
     status: DaikinThermostatStatus
-    fan_mode: DaikinThermostatFanMode
-    fan_speed: DaikinThermostatFanSpeed
+    fan_speeds: DaikinThermostatFanSpeeds
+    operating_fan_speed_supported: bool
+    fan_speed_supported_modes: set[DaikinThermostatMode]
+    circulation_mode: DaikinThermostatCirculationMode | None
+    circulation_mode_supported: bool
+    circulation_speed: DaikinThermostatCirculationSpeed | None
+    circulation_speed_supported: bool
     schedule: DaikinThermostatSchedule
     indoor_temperature: Temperature
     indoor_humidity: int
@@ -546,21 +570,55 @@ class DaikinOne:
         if thermostat_id in self.__thermostats:
             self.__thermostats[thermostat_id].schedule.enabled = enabled
 
-    async def set_thermostat_fan_mode(self, thermostat_id: str, fan_mode: DaikinThermostatFanMode) -> None:
-        """Set thermostat fan mode"""
+    async def set_thermostat_circulation_mode(
+        self, thermostat_id: str, circulation_mode: DaikinThermostatCirculationMode
+    ) -> None:
+        """Set the unitary thermostat circulation policy."""
         await self.__req(
             url=f"{DAIKIN_API_URL_DEVICE_DATA}/{thermostat_id}",
             method="PUT",
-            body={"fanCirculate": fan_mode.value},
+            body={"fanCirculate": circulation_mode.value},
         )
+        if thermostat_id in self.__thermostats:
+            self.__thermostats[thermostat_id].circulation_mode = circulation_mode
 
-    async def set_thermostat_fan_speed(self, thermostat_id: str, fan_speed: DaikinThermostatFanSpeed) -> None:
-        """Set thermostat fan speed"""
+    async def set_thermostat_circulation_speed(
+        self, thermostat_id: str, circulation_speed: DaikinThermostatCirculationSpeed
+    ) -> None:
+        """Set the unitary thermostat circulation speed."""
         await self.__req(
             url=f"{DAIKIN_API_URL_DEVICE_DATA}/{thermostat_id}",
             method="PUT",
-            body={"fanCirculateSpeed": fan_speed.value},
+            body={"fanCirculateSpeed": circulation_speed.value},
         )
+        if thermostat_id in self.__thermostats:
+            self.__thermostats[thermostat_id].circulation_speed = circulation_speed
+
+    async def set_thermostat_fan_speed(
+        self,
+        thermostat_id: str,
+        fan_speed: DaikinThermostatFanSpeed,
+        modes: set[DaikinThermostatMode],
+    ) -> None:
+        """Set one or more mode-specific indoor-unit operating fan speeds."""
+        fields = {
+            DaikinThermostatMode.HEAT: "iduHeatFanSpeed",
+            DaikinThermostatMode.COOL: "iduCoolFanSpeed",
+            DaikinThermostatMode.AUTO: "iduAutoFanSpeed",
+            DaikinThermostatMode.DRY: "iduDryFanSpeed",
+        }
+        if not modes or any(mode not in fields for mode in modes):
+            raise ValueError(f"Unsupported fan-speed modes: {modes}")
+
+        await self.__req(
+            url=f"{DAIKIN_API_URL_DEVICE_DATA}/{thermostat_id}",
+            method="PUT",
+            body={fields[mode]: fan_speed.value for mode in modes},
+        )
+        if thermostat_id in self.__thermostats:
+            cached = self.__thermostats[thermostat_id].fan_speeds
+            for mode in modes:
+                setattr(cached, mode.name.lower(), fan_speed)
 
     async def __refresh_thermostats(self):
         devices = await self.__req(DAIKIN_API_URL_DEVICE_DATA)
@@ -611,6 +669,21 @@ class DaikinOne:
 
     def __map_thermostat(self, payload: DaikinDeviceDataResponse) -> DaikinThermostat:
         try:
+
+            def optional_enum[E: Enum](field: str, enum_type: type[E]) -> E | None:
+                if field not in payload.data:
+                    return None
+                try:
+                    return enum_type(payload.data[field])
+                except (TypeError, ValueError):
+                    log.warning(
+                        "Ignoring unsupported %s value %r for thermostat %s",
+                        field,
+                        payload.data[field],
+                        payload.id,
+                    )
+                    return None
+
             capabilities = set(DaikinThermostatCapability)
             if payload.data.get("ctSystemCapHeat") or payload.data.get("iduHeatSetpoint"):
                 capabilities.add(DaikinThermostatCapability.HEAT)
@@ -659,8 +732,37 @@ class DaikinOne:
                     else DaikinThermostatMode.OFF
                 ),
                 status=status,
-                fan_mode=DaikinThermostatFanMode(payload.data.get("fanCirculate", DaikinThermostatFanMode.OFF)),
-                fan_speed=DaikinThermostatFanSpeed(payload.data.get("fanCirculateSpeed", DaikinThermostatFanSpeed.LOW)),
+                fan_speeds=DaikinThermostatFanSpeeds(
+                    heat=optional_enum("iduHeatFanSpeed", DaikinThermostatFanSpeed),
+                    cool=optional_enum("iduCoolFanSpeed", DaikinThermostatFanSpeed),
+                    auto=optional_enum("iduAutoFanSpeed", DaikinThermostatFanSpeed),
+                    dry=optional_enum("iduDryFanSpeed", DaikinThermostatFanSpeed),
+                    fan=optional_enum("iduFanModeFanSpeed", DaikinThermostatFanSpeed),
+                ),
+                operating_fan_speed_supported=any(
+                    field in payload.data
+                    for field in (
+                        "iduHeatFanSpeed",
+                        "iduCoolFanSpeed",
+                        "iduAutoFanSpeed",
+                        "iduDryFanSpeed",
+                        "iduFanModeFanSpeed",
+                    )
+                ),
+                fan_speed_supported_modes={
+                    mode
+                    for mode, field in {
+                        DaikinThermostatMode.HEAT: "iduHeatFanSpeed",
+                        DaikinThermostatMode.COOL: "iduCoolFanSpeed",
+                        DaikinThermostatMode.AUTO: "iduAutoFanSpeed",
+                        DaikinThermostatMode.DRY: "iduDryFanSpeed",
+                    }.items()
+                    if field in payload.data
+                },
+                circulation_mode=optional_enum("fanCirculate", DaikinThermostatCirculationMode),
+                circulation_mode_supported="fanCirculate" in payload.data,
+                circulation_speed=optional_enum("fanCirculateSpeed", DaikinThermostatCirculationSpeed),
+                circulation_speed_supported="fanCirculateSpeed" in payload.data,
                 schedule=DaikinThermostatSchedule(enabled=payload.data.get("schedEnabled", False)),
                 indoor_temperature=Temperature.from_celsius(payload.data.get("iduRoomTemp", 0)),  # old: tempIndoor
                 indoor_humidity=payload.data.get("humIndoor", 0),

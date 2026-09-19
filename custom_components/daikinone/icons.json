@@ -10,8 +10,13 @@
           },
           "fan_mode": {
             "state": {
-              "always_on": "mdi:fan",
-              "schedule": "mdi:fan-clock"
+              "auto": "mdi:fan-auto",
+              "quiet": "mdi:fan-speed-1",
+              "low": "mdi:fan-speed-1",
+              "medium low": "mdi:fan-speed-1",
+              "medium": "mdi:fan-speed-2",
+              "medium high": "mdi:fan-speed-3",
+              "high": "mdi:fan-speed-3"
             }
           }
         }

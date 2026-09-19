@@ -98,6 +98,21 @@ entity in every HVAC mode, including Off. Each reading falls back independently
 to the head's internal sensor when its external entity is invalid, unavailable,
 or stale.
 
+### Fan controls
+
+For compatible indoor heads, the climate entity's **Fan mode** control sets the
+actual operating fan speed: Auto, Quiet, Low, Medium Low, Medium, Medium High,
+or High. Daikin stores a separate speed for each HVAC mode, so Heat, Cool, and
+native Auto change only their own speed. Emulated Heat/Cool applies the selected
+speed to both Heat and Cool and remains adjustable while the controller has the
+head physically off between calls for heating or cooling.
+
+Native Off hides the operating fan control. If a unitary thermostat reports
+Daikin's separate circulation controls, Home Assistant exposes them as
+**Circulation Mode** and **Circulation Speed** selects. These selects are not
+created for mini-split heads whose API payload does not contain the corresponding
+circulation fields.
+
 <!-- markdownlint-disable-next-line no-inline-html -->
 <img src="docs/dashboard.png" width="350" alt="dashboard example">
 

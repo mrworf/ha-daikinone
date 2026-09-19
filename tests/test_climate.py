@@ -4,15 +4,15 @@ from typing import Any, cast
 
 import pytest
 from homeassistant.components.climate import ClimateEntityDescription
-from homeassistant.components.climate.const import HVACMode
+from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 
 from custom_components.daikinone.climate import DaikinOneThermostat
 from custom_components.daikinone.daikinone import (
     DaikinOne,
     DaikinThermostat,
     DaikinThermostatCapability,
-    DaikinThermostatFanMode,
     DaikinThermostatFanSpeed,
+    DaikinThermostatFanSpeeds,
     DaikinThermostatMode,
     DaikinThermostatSchedule,
     DaikinThermostatStatus,
@@ -66,8 +66,24 @@ def thermostat(mode: DaikinThermostatMode = DaikinThermostatMode.AUTO) -> Daikin
         capabilities={DaikinThermostatCapability.HEAT, DaikinThermostatCapability.COOL},
         mode=mode,
         status=DaikinThermostatStatus.IDLE,
-        fan_mode=DaikinThermostatFanMode.OFF,
-        fan_speed=DaikinThermostatFanSpeed.LOW,
+        fan_speeds=DaikinThermostatFanSpeeds(
+            heat=DaikinThermostatFanSpeed.AUTO,
+            cool=DaikinThermostatFanSpeed.AUTO,
+            auto=DaikinThermostatFanSpeed.AUTO,
+            dry=DaikinThermostatFanSpeed.AUTO,
+            fan=DaikinThermostatFanSpeed.AUTO,
+        ),
+        operating_fan_speed_supported=True,
+        fan_speed_supported_modes={
+            DaikinThermostatMode.HEAT,
+            DaikinThermostatMode.COOL,
+            DaikinThermostatMode.AUTO,
+            DaikinThermostatMode.DRY,
+        },
+        circulation_mode=None,
+        circulation_mode_supported=False,
+        circulation_speed=None,
+        circulation_speed_supported=False,
         schedule=DaikinThermostatSchedule(enabled=False),
         indoor_temperature=Temperature.from_celsius(21),
         indoor_humidity=40,
@@ -92,12 +108,13 @@ def climate_entity(
     device: DaikinThermostat,
     connector: Any | None = None,
     external_temperature: Any | None = None,
+    logical_mode: HVACMode | None = None,
 ) -> DaikinOneThermostat:
     daikin = connector or SimpleNamespace()
 
     class FakeEmulation:
         def __init__(self) -> None:
-            self.mode = {
+            self.mode = logical_mode or {
                 DaikinThermostatMode.AUTO: HVACMode.AUTO,
                 DaikinThermostatMode.HEAT: HVACMode.HEAT,
                 DaikinThermostatMode.COOL: HVACMode.COOL,
@@ -262,3 +279,124 @@ def test_climate_mode_change_sends_one_request() -> None:
     asyncio.run(entity.async_set_hvac_mode(HVACMode.HEAT))
 
     assert calls == [DaikinThermostatMode.HEAT]
+
+
+def test_native_heat_fan_mode_sets_only_heat_speed() -> None:
+    device = thermostat(DaikinThermostatMode.HEAT)
+    calls: list[tuple[DaikinThermostatFanSpeed, set[DaikinThermostatMode]]] = []
+
+    class FakeConnector:
+        async def set_thermostat_fan_speed(
+            self,
+            thermostat_id: str,
+            speed: DaikinThermostatFanSpeed,
+            modes: set[DaikinThermostatMode],
+        ) -> None:
+            assert thermostat_id == "head"
+            calls.append((speed, modes))
+
+    entity = climate_entity(device, FakeConnector())
+
+    async def update_optimistically(operation: Any, optimistic_update: Any, check: Any) -> None:
+        await operation()
+        optimistic_update(device)
+        assert check(device)
+
+    entity.update_state_optimistically = update_optimistically  # type: ignore[method-assign]
+    entity.update_entity_attributes()
+
+    assert entity.fan_modes == [
+        "auto",
+        "quiet",
+        "low",
+        "medium low",
+        "medium",
+        "medium high",
+        "high",
+    ]
+    assert entity.supported_features & ClimateEntityFeature.FAN_MODE
+    assert entity.fan_mode == "auto"
+
+    asyncio.run(entity.async_set_fan_mode("medium high"))
+
+    assert calls == [(DaikinThermostatFanSpeed.MEDIUM_HIGH, {DaikinThermostatMode.HEAT})]
+    assert device.fan_speeds.heat is DaikinThermostatFanSpeed.MEDIUM_HIGH
+    assert device.fan_speeds.cool is DaikinThermostatFanSpeed.AUTO
+
+
+def test_emulated_heat_cool_sets_both_speeds_while_head_is_off() -> None:
+    device = thermostat(DaikinThermostatMode.OFF)
+    calls: list[set[DaikinThermostatMode]] = []
+
+    class FakeConnector:
+        async def set_thermostat_fan_speed(
+            self,
+            thermostat_id: str,
+            speed: DaikinThermostatFanSpeed,
+            modes: set[DaikinThermostatMode],
+        ) -> None:
+            del thermostat_id, speed
+            calls.append(modes)
+
+    entity = climate_entity(device, FakeConnector(), logical_mode=HVACMode.HEAT_COOL)
+
+    async def update_optimistically(operation: Any, optimistic_update: Any, check: Any) -> None:
+        await operation()
+        optimistic_update(device)
+        assert check(device)
+
+    entity.update_state_optimistically = update_optimistically  # type: ignore[method-assign]
+    entity.update_entity_attributes()
+
+    assert entity.supported_features & ClimateEntityFeature.FAN_MODE
+    assert entity.fan_mode == "auto"
+
+    asyncio.run(entity.async_set_fan_mode("quiet"))
+
+    assert calls == [{DaikinThermostatMode.HEAT, DaikinThermostatMode.COOL}]
+    assert device.fan_speeds.heat is DaikinThermostatFanSpeed.QUIET
+    assert device.fan_speeds.cool is DaikinThermostatFanSpeed.QUIET
+
+
+def test_emulated_heat_cool_idle_omits_mismatched_speed() -> None:
+    device = thermostat(DaikinThermostatMode.OFF)
+    device.fan_speeds.cool = DaikinThermostatFanSpeed.HIGH
+    entity = climate_entity(device, logical_mode=HVACMode.HEAT_COOL)
+
+    entity.update_entity_attributes()
+
+    assert entity.supported_features & ClimateEntityFeature.FAN_MODE
+    assert entity.fan_mode is None
+
+
+def test_native_off_hides_operating_fan_control() -> None:
+    entity = climate_entity(thermostat(DaikinThermostatMode.OFF))
+
+    entity.update_entity_attributes()
+
+    assert not entity.supported_features & ClimateEntityFeature.FAN_MODE
+    assert entity.fan_mode is None
+
+
+def test_connector_fan_speed_payload_uses_mode_specific_fields() -> None:
+    connector = DaikinOne(DaikinUserCredentials("user@example.invalid", "unused"))
+    requests: list[dict[str, Any]] = []
+
+    async def request(*args: Any, **kwargs: Any) -> None:
+        requests.append(kwargs)
+
+    connector._DaikinOne__req = request  # type: ignore[attr-defined]
+
+    asyncio.run(
+        connector.set_thermostat_fan_speed(
+            "head",
+            DaikinThermostatFanSpeed.MEDIUM_LOW,
+            {DaikinThermostatMode.HEAT, DaikinThermostatMode.COOL},
+        )
+    )
+
+    assert requests[0]["body"] == {"iduHeatFanSpeed": 4, "iduCoolFanSpeed": 4}
+    with pytest.raises(ValueError, match="Unsupported"):
+        asyncio.run(
+            connector.set_thermostat_fan_speed("head", DaikinThermostatFanSpeed.AUTO, {DaikinThermostatMode.OFF})
+        )

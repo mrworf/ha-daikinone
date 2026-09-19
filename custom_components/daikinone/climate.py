@@ -13,7 +13,6 @@ from homeassistant.components.climate.const import (
     ATTR_TARGET_TEMP_LOW,
     ATTR_TARGET_TEMP_HIGH,
     ATTR_HVAC_MODE,
-    FAN_OFF,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature, ATTR_TEMPERATURE
@@ -28,7 +27,7 @@ from custom_components.daikinone.daikinone import (
     DaikinThermostatCapability,
     DaikinThermostatMode,
     DaikinThermostatStatus,
-    DaikinThermostatFanMode,
+    DaikinThermostatFanSpeed,
 )
 from custom_components.daikinone.utils import Temperature
 
@@ -61,15 +60,17 @@ class DaikinOneThermostatPresetMode(Enum):
 
 
 class DaikinOneThermostatFanMode(Enum):
-    OFF = FAN_OFF
-    ALWAYS_ON = "always_on"
-    SCHEDULED = "schedule"
+    AUTO = "auto"
+    QUIET = "quiet"
+    LOW = "low"
+    MEDIUM_LOW = "medium low"
+    MEDIUM = "medium"
+    MEDIUM_HIGH = "medium high"
+    HIGH = "high"
 
 
-class DaikinOneThermostatFanSpeed(Enum):
-    LOW = 0
-    MEDIUM = 1
-    HIGH = 2
+FAN_MODE_TO_SPEED = {fan_mode.value: DaikinThermostatFanSpeed[fan_mode.name] for fan_mode in DaikinOneThermostatFanMode}
+FAN_SPEED_TO_MODE = {speed: fan_mode for fan_mode, speed in FAN_MODE_TO_SPEED.items()}
 
 
 class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
@@ -91,13 +92,13 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         self._attr_translation_key = "daikinone_thermostat"
         self._attr_unique_id = f"{self._device.id}-climate"
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
-        self._attr_supported_features = (
+        self._base_supported_features = (
             ClimateEntityFeature.TURN_ON
             | ClimateEntityFeature.TURN_OFF
             | ClimateEntityFeature.TARGET_TEMPERATURE
             | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE  # It's a lie
-            | ClimateEntityFeature.FAN_MODE
         )
+        self._attr_supported_features = self._base_supported_features
         self._attr_hvac_modes = self.get_hvac_modes()
         self._attr_fan_modes = [m.value for m in DaikinOneThermostatFanMode]
 
@@ -115,7 +116,8 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         self._attr_preset_mode = None
 
         if DaikinThermostatCapability.EMERGENCY_HEAT in self._device.capabilities:
-            self._attr_supported_features |= ClimateEntityFeature.PRESET_MODE
+            self._base_supported_features |= ClimateEntityFeature.PRESET_MODE
+            self._attr_supported_features = self._base_supported_features
             self._attr_preset_modes += [DaikinOneThermostatPresetMode.EMERGENCY_HEAT.value]
 
         self._data.emulation.register(thermostat, self._controller_updated)
@@ -412,26 +414,51 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             raise ValueError("Set temperature called with no temperature values")
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
-        target_fan_mode: DaikinThermostatFanMode
-        match fan_mode:
-            case DaikinOneThermostatFanMode.OFF.value:
-                target_fan_mode = DaikinThermostatFanMode.OFF
-            case DaikinOneThermostatFanMode.ALWAYS_ON.value:
-                target_fan_mode = DaikinThermostatFanMode.ALWAYS_ON
-            case DaikinOneThermostatFanMode.SCHEDULED.value:
-                target_fan_mode = DaikinThermostatFanMode.SCHEDULED
-            case _:
-                raise ValueError(f"Attempted to set unsupported fan mode: {fan_mode}")
+        """Set the operating fan speed for the active logical mode."""
+        if (target_fan_speed := FAN_MODE_TO_SPEED.get(fan_mode)) is None:
+            raise ValueError(f"Attempted to set unsupported fan mode: {fan_mode}")
+        modes = self._fan_speed_modes()
+        if not modes or not modes.issubset(self._device.fan_speed_supported_modes):
+            raise ValueError("Operating fan speed is unavailable in the current mode")
 
-        # update fan mode optimistically
-        def update(t: DaikinThermostat):
-            t.fan_mode = target_fan_mode
+        def update(t: DaikinThermostat) -> None:
+            for mode in modes:
+                setattr(t.fan_speeds, mode.name.lower(), target_fan_speed)
 
         await self.update_state_optimistically(
-            operation=lambda: self._data.daikin.set_thermostat_fan_mode(self._device.id, target_fan_mode),
+            operation=lambda: self._data.daikin.set_thermostat_fan_speed(self._device.id, target_fan_speed, modes),
             optimistic_update=update,
-            check=lambda t: t.fan_mode == target_fan_mode,
+            check=lambda t: all(getattr(t.fan_speeds, mode.name.lower()) == target_fan_speed for mode in modes),
         )
+
+    def _fan_speed_modes(self) -> set[DaikinThermostatMode]:
+        """Return physical modes controlled by the current logical mode."""
+        if self._data.emulation.logical_mode(self._device.id) is HVACMode.HEAT_COOL:
+            return {DaikinThermostatMode.HEAT, DaikinThermostatMode.COOL}
+        if self._device.mode in {
+            DaikinThermostatMode.HEAT,
+            DaikinThermostatMode.COOL,
+            DaikinThermostatMode.AUTO,
+        }:
+            return {self._device.mode}
+        return set()
+
+    def _current_fan_speed(self) -> DaikinThermostatFanSpeed | None:
+        """Resolve the speed shown for the active or emulated operating mode."""
+        if self._data.emulation.logical_mode(self._device.id) is HVACMode.HEAT_COOL:
+            physical_mode = self._data.emulation.expected_physical_mode(self._device.id)
+            if physical_mode in {DaikinThermostatMode.HEAT, DaikinThermostatMode.COOL}:
+                return getattr(self._device.fan_speeds, physical_mode.name.lower())
+            if self._device.fan_speeds.heat == self._device.fan_speeds.cool:
+                return self._device.fan_speeds.heat
+            return None
+        if self._device.mode in {
+            DaikinThermostatMode.HEAT,
+            DaikinThermostatMode.COOL,
+            DaikinThermostatMode.AUTO,
+        }:
+            return getattr(self._device.fan_speeds, self._device.mode.name.lower())
+        return None
 
     async def async_get_device(self) -> DaikinThermostat:
         return self._data.daikin.get_thermostat(self._device.id)
@@ -556,11 +583,12 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             self._device.set_point_cool_max.celsius,
         )
 
-        # fan settings
-        match self._device.fan_mode:
-            case DaikinThermostatFanMode.OFF:
-                self._attr_fan_mode = DaikinOneThermostatFanMode.OFF.value
-            case DaikinThermostatFanMode.ALWAYS_ON:
-                self._attr_fan_mode = DaikinOneThermostatFanMode.ALWAYS_ON.value
-            case DaikinThermostatFanMode.SCHEDULED:
-                self._attr_fan_mode = DaikinOneThermostatFanMode.SCHEDULED.value
+        # The climate fan control is the head unit's operating speed, not its
+        # separate unitary-system circulation policy.
+        fan_speed_modes = self._fan_speed_modes()
+        fan_speed_available = bool(fan_speed_modes) and fan_speed_modes.issubset(self._device.fan_speed_supported_modes)
+        self._attr_supported_features = self._base_supported_features
+        if fan_speed_available:
+            self._attr_supported_features |= ClimateEntityFeature.FAN_MODE
+        current_fan_speed = self._current_fan_speed() if fan_speed_available else None
+        self._attr_fan_mode = FAN_SPEED_TO_MODE.get(current_fan_speed) if current_fan_speed is not None else None
