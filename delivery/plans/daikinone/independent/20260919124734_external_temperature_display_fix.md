@@ -28,4 +28,4 @@ remain valid.
 ## Transaction
 
 - Parent commit: `b44cfdbb7f9ced76bcc5afe6e93d9abc6c434a41`.
-- Payload commit: recorded by the provenance closeout after delivery.
+- Payload commit: `7775b82c4a14aa35f54684ec4dda3eab522e46ff`.
