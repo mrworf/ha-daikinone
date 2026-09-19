@@ -13,6 +13,7 @@ from homeassistant.core import HomeAssistant
 
 from custom_components.daikinone.const import CONF_OPTION_EXTERNAL_TEMPERATURE_CONTROLS
 from custom_components.daikinone.config_flow import (
+    CONF_HUMIDITY_SENSOR_ENTITY_ID,
     CONF_MAX_BIAS,
     CONF_SENSOR_ENTITY_ID,
     CONF_THERMOSTAT_ID,
@@ -97,6 +98,7 @@ def make_controller(
     mode: DaikinThermostatMode,
     external: float | str,
     max_bias: float = 5.0,
+    humidity: float | str | None = None,
 ) -> tuple[ExternalTemperatureController, FakeDaikin, list[datetime], Any]:
     device = thermostat(mode)
     daikin = FakeDaikin(device)
@@ -104,10 +106,13 @@ def make_controller(
         state=str(external),
         attributes={"unit_of_measurement": UnitOfTemperature.CELSIUS},
     )
+    sensor_values: dict[str, Any] = {"sensor.room": sensor}
+    if humidity is not None:
+        sensor_values["sensor.room_humidity"] = SimpleNamespace(state=str(humidity), attributes={})
     hass = cast(
         HomeAssistant,
         SimpleNamespace(
-            states=FakeStates({"sensor.room": sensor}),
+            states=FakeStates(sensor_values),
             data={},
             config=SimpleNamespace(config_dir="/tmp"),
         ),
@@ -118,7 +123,12 @@ def make_controller(
             entry_id="entry",
             options={
                 CONF_OPTION_EXTERNAL_TEMPERATURE_CONTROLS: [
-                    ExternalTemperatureConfig("head", "sensor.room", max_bias).as_dict()
+                    ExternalTemperatureConfig(
+                        "head",
+                        "sensor.room",
+                        max_bias,
+                        "sensor.room_humidity" if humidity is not None else None,
+                    ).as_dict()
                 ]
             },
         ),
@@ -206,6 +216,39 @@ def test_state_round_trip_preserves_biases_and_logical_targets() -> None:
     assert restored.heat_bias == 2.0
     assert restored.cool_bias == -1.5
     assert restored.last_evaluated == datetime(2026, 9, 19, tzinfo=UTC)
+
+
+def test_existing_temperature_only_config_remains_compatible() -> None:
+    config = ExternalTemperatureConfig.from_dict(
+        {
+            "thermostat_id": "head",
+            "sensor_entity_id": "sensor.room",
+            "max_bias": 5,
+        }
+    )
+
+    assert config.humidity_sensor_entity_id is None
+    assert "humidity_sensor_entity_id" not in config.as_dict()
+
+
+def test_external_humidity_requires_a_fresh_percentage() -> None:
+    controller, _, clock, _ = make_controller(
+        mode=DaikinThermostatMode.OFF,
+        external=21,
+        humidity=56,
+    )
+    humidity_sensor = controller._hass.states.get("sensor.room_humidity")
+    assert humidity_sensor is not None
+    humidity_sensor = cast(Any, humidity_sensor)
+
+    assert controller.external_humidity("head") == 56
+
+    humidity_sensor.state = "101"
+    assert controller.external_humidity("head") is None
+
+    humidity_sensor.state = "55"
+    humidity_sensor.last_updated = clock[0] - timedelta(minutes=31)
+    assert controller.external_humidity("head") is None
 
 
 def test_stale_sensor_falls_back_without_changing_bias() -> None:
@@ -313,13 +356,17 @@ def test_options_flow_adds_optional_sensor_with_default_bias() -> None:
         state="21",
         attributes={"device_class": SensorDeviceClass.TEMPERATURE},
     )
+    humidity_sensor = SimpleNamespace(
+        state="55",
+        attributes={"device_class": SensorDeviceClass.HUMIDITY},
+    )
     entry = cast(ConfigEntry, SimpleNamespace(entry_id="entry", options={}))
     flow = DaikinOneOptionsFlow(entry)
     flow.hass = cast(
         HomeAssistant,
         SimpleNamespace(
             data={"daikinone": SimpleNamespace(daikin=connector)},
-            states=FakeStates({"sensor.room": sensor}),
+            states=FakeStates({"sensor.room": sensor, "sensor.room_humidity": humidity_sensor}),
         ),
     )
 
@@ -328,9 +375,12 @@ def test_options_flow_adds_optional_sensor_with_default_bias() -> None:
         flow.async_step_external_temperature_head(
             {
                 CONF_SENSOR_ENTITY_ID: "sensor.room",
+                CONF_HUMIDITY_SENSOR_ENTITY_ID: "sensor.room_humidity",
                 CONF_MAX_BIAS: 5.0,
             }
         )
     )
 
-    assert flow._external_controls["head"] == ExternalTemperatureConfig("head", "sensor.room", 5.0)
+    assert flow._external_controls["head"] == ExternalTemperatureConfig(
+        "head", "sensor.room", 5.0, "sensor.room_humidity"
+    )

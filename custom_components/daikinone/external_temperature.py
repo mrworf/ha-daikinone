@@ -54,6 +54,7 @@ class ExternalTemperatureConfig:
     thermostat_id: str
     sensor_entity_id: str
     max_bias: float = DEFAULT_EXTERNAL_TEMPERATURE_MAX_BIAS
+    humidity_sensor_entity_id: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> ExternalTemperatureConfig:
@@ -62,15 +63,21 @@ class ExternalTemperatureConfig:
             thermostat_id=str(value["thermostat_id"]),
             sensor_entity_id=str(value["sensor_entity_id"]),
             max_bias=float(value.get("max_bias", DEFAULT_EXTERNAL_TEMPERATURE_MAX_BIAS)),
+            humidity_sensor_entity_id=(
+                str(value["humidity_sensor_entity_id"]) if value.get("humidity_sensor_entity_id") else None
+            ),
         )
 
     def as_dict(self) -> dict[str, str | float]:
         """Serialize an options entry."""
-        return {
+        result: dict[str, str | float] = {
             "thermostat_id": self.thermostat_id,
             "sensor_entity_id": self.sensor_entity_id,
             "max_bias": self.max_bias,
         }
+        if self.humidity_sensor_entity_id is not None:
+            result["humidity_sensor_entity_id"] = self.humidity_sensor_entity_id
+        return result
 
 
 @dataclass
@@ -188,11 +195,20 @@ class ExternalTemperatureController:
                 self._cleanup[thermostat_id] = AdaptiveHeadState.from_dict(cast(dict[str, Any], raw), thermostat)
 
         sensor_ids = {config.sensor_entity_id for config in self._configs.values()}
+        humidity_sensor_ids = {
+            config.humidity_sensor_entity_id
+            for config in self._configs.values()
+            if config.humidity_sensor_entity_id is not None
+        }
         if sensor_ids:
             self._unsubscribers.append(
                 async_track_state_change_event(self._hass, sensor_ids, self._async_sensor_changed)
             )
-        if sensor_ids or self._cleanup:
+        if humidity_sensor_ids:
+            self._unsubscribers.append(
+                async_track_state_change_event(self._hass, humidity_sensor_ids, self._async_humidity_changed)
+            )
+        if sensor_ids or humidity_sensor_ids or self._cleanup:
             self._unsubscribers.append(
                 async_track_time_interval(self._hass, self._async_periodic_update, timedelta(minutes=1))
             )
@@ -264,6 +280,26 @@ class ExternalTemperatureController:
         if external is not None:
             return external
         return thermostat.indoor_temperature.celsius if thermostat.indoor_temperature_valid else None
+
+    def external_humidity(self, thermostat_id: str) -> int | None:
+        """Return a fresh, valid configured humidity reading."""
+        config = self._configs.get(thermostat_id)
+        if config is None or config.humidity_sensor_entity_id is None:
+            return None
+        sensor_state = self._hass.states.get(config.humidity_sensor_entity_id)
+        if sensor_state is None or sensor_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            return None
+        last_updated = getattr(sensor_state, "last_updated", None)
+        if isinstance(last_updated, datetime):
+            if last_updated.tzinfo is None:
+                last_updated = last_updated.replace(tzinfo=UTC)
+            if self._now() - last_updated > timedelta(minutes=EXTERNAL_TEMPERATURE_STALE_MINUTES):
+                return None
+        try:
+            value = float(sensor_state.state)
+        except (TypeError, ValueError):
+            return None
+        return round(value) if 0 <= value <= 100 else None
 
     def physical_targets(self, thermostat: DaikinThermostat) -> tuple[float, float]:
         """Return bounded physical heat and cool targets."""
@@ -490,6 +526,13 @@ class ExternalTemperatureController:
         if self._demand_reconciler is not None:
             await self._demand_reconciler()
         await self.async_reconcile()
+
+    async def _async_humidity_changed(self, event: Event[EventStateChangedData]) -> None:
+        """Publish humidity changes without reevaluating temperature bias."""
+        entity_id = event.data.get("entity_id")
+        for thermostat_id, config in self._configs.items():
+            if config.humidity_sensor_entity_id == entity_id:
+                self._notify(thermostat_id)
 
     def _notify(self, thermostat_id: str) -> None:
         callback = self._callbacks.get(thermostat_id)

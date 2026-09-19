@@ -41,6 +41,7 @@ CONF_EMULATION_DWELL_MINUTES = "emulation_dwell_minutes"
 CONF_CONVERT_EXTERNAL_AUTO = "convert_external_auto"
 CONF_THERMOSTAT_ID = "thermostat_id"
 CONF_SENSOR_ENTITY_ID = "sensor_entity_id"
+CONF_HUMIDITY_SENSOR_ENTITY_ID = "humidity_sensor_entity_id"
 CONF_MAX_BIAS = "max_bias"
 CONF_DELETE_EXTERNAL_CONTROL = "delete_external_control"
 
@@ -237,11 +238,25 @@ class DaikinOneOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
             )
             if sensor_state is None or attributes.get("device_class") != SensorDeviceClass.TEMPERATURE:
                 errors[CONF_SENSOR_ENTITY_ID] = "not_temperature_sensor"
+            humidity_sensor_entity_id = str(user_input.get(CONF_HUMIDITY_SENSOR_ENTITY_ID) or "") or None
+            if humidity_sensor_entity_id is not None:
+                humidity_state = self.hass.states.get(humidity_sensor_entity_id)
+                humidity_attributes = (
+                    cast(
+                        dict[str, Any],
+                        cast(object, humidity_state.attributes),  # pyright: ignore[reportUnknownMemberType]
+                    )
+                    if humidity_state is not None
+                    else {}
+                )
+                if humidity_state is None or humidity_attributes.get("device_class") != SensorDeviceClass.HUMIDITY:
+                    errors[CONF_HUMIDITY_SENSOR_ENTITY_ID] = "not_humidity_sensor"
             if not errors:
                 self._external_controls[thermostat_id] = ExternalTemperatureConfig(
                     thermostat_id=thermostat_id,
                     sensor_entity_id=sensor_entity_id,
                     max_bias=float(user_input[CONF_MAX_BIAS]),
+                    humidity_sensor_entity_id=humidity_sensor_entity_id,
                 )
                 self._selected_thermostat_id = None
                 return await self.async_step_init()
@@ -249,6 +264,11 @@ class DaikinOneOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
         schema: dict[vol.Marker, Any] = {
             vol.Required(CONF_SENSOR_ENTITY_ID): selector.EntitySelector(  # pyright: ignore[reportUnknownMemberType]
                 selector.EntitySelectorConfig(domain="sensor", device_class=SensorDeviceClass.TEMPERATURE)
+            ),
+            vol.Optional(
+                CONF_HUMIDITY_SENSOR_ENTITY_ID
+            ): selector.EntitySelector(  # pyright: ignore[reportUnknownMemberType]
+                selector.EntitySelectorConfig(domain="sensor", device_class=SensorDeviceClass.HUMIDITY)
             ),
             vol.Required(CONF_MAX_BIAS): selector.NumberSelector(  # pyright: ignore[reportUnknownMemberType]
                 selector.NumberSelectorConfig(
@@ -268,6 +288,7 @@ class DaikinOneOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
                 vol.Schema(schema),
                 {
                     CONF_SENSOR_ENTITY_ID: existing.sensor_entity_id if existing else None,
+                    CONF_HUMIDITY_SENSOR_ENTITY_ID: existing.humidity_sensor_entity_id if existing else None,
                     CONF_MAX_BIAS: existing.max_bias if existing else DEFAULT_EXTERNAL_TEMPERATURE_MAX_BIAS,
                     CONF_DELETE_EXTERNAL_CONTROL: False,
                 },

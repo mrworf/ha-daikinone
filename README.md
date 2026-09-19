@@ -71,7 +71,9 @@ cloud command.
 The integration can use any Home Assistant temperature sensor as the room
 temperature for an individual head. Open the integration's **Configure** dialog,
 choose **External temperature sensors**, select the head and sensor, and set the
-maximum allowed bias. The default maximum is 5 °C.
+maximum allowed bias. The default maximum is 5 °C. You can also select an
+optional humidity sensor, since Home Assistant normally exposes temperature and
+humidity from the same physical device as separate entities.
 
 In Heat, Cool, and emulated Heat/Cool, Home Assistant keeps showing the desired
 logical target. The integration slowly learns a separate heating and cooling
@@ -90,6 +92,11 @@ current learned bias and physical target are frozen and Home Assistant falls
 back to displaying and using the head's internal temperature. Removing the
 external-sensor configuration restores the unbiased logical heat and cool
 targets; it does not re-enable the Daikin schedule automatically.
+
+Fresh configured temperature and humidity readings are shown on the climate
+entity in every HVAC mode, including Off. Each reading falls back independently
+to the head's internal sensor when its external entity is invalid, unavailable,
+or stale.
 
 <!-- markdownlint-disable-next-line no-inline-html -->
 <img src="docs/dashboard.png" width="350" alt="dashboard example">

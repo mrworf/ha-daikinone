@@ -32,7 +32,11 @@ class NullExternalTemperature:
         del thermostat_id
         return False
 
-    def external_temperature(self, thermostat_id: str) -> None:
+    def external_temperature(self, thermostat_id: str) -> float | None:
+        del thermostat_id
+        return None
+
+    def external_humidity(self, thermostat_id: str) -> int | None:
         del thermostat_id
         return None
 
@@ -84,7 +88,11 @@ def thermostat(mode: DaikinThermostatMode = DaikinThermostatMode.AUTO) -> Daikin
     )
 
 
-def climate_entity(device: DaikinThermostat, connector: Any | None = None) -> DaikinOneThermostat:
+def climate_entity(
+    device: DaikinThermostat,
+    connector: Any | None = None,
+    external_temperature: Any | None = None,
+) -> DaikinOneThermostat:
     daikin = connector or SimpleNamespace()
 
     class FakeEmulation:
@@ -128,7 +136,7 @@ def climate_entity(device: DaikinThermostat, connector: Any | None = None) -> Da
         SimpleNamespace(
             daikin=daikin,
             emulation=FakeEmulation(),
-            external_temperature=NullExternalTemperature(),
+            external_temperature=external_temperature or NullExternalTemperature(),
         ),
     )
     return DaikinOneThermostat(
@@ -147,6 +155,52 @@ def test_native_auto_exposes_single_target_temperature() -> None:
     assert entity.target_temperature == 22
     assert entity.target_temperature_low is None
     assert entity.target_temperature_high is None
+
+
+def test_configured_external_readings_are_shown_while_head_is_off() -> None:
+    class ExternalReadings(NullExternalTemperature):
+        def configured(self, thermostat_id: str) -> bool:
+            del thermostat_id
+            return True
+
+        def external_temperature(self, thermostat_id: str) -> float:
+            del thermostat_id
+            return 18.5
+
+        def external_humidity(self, thermostat_id: str) -> int:
+            del thermostat_id
+            return 56
+
+    entity = climate_entity(
+        thermostat(DaikinThermostatMode.OFF),
+        external_temperature=ExternalReadings(),
+    )
+
+    entity.update_entity_attributes()
+
+    assert entity.current_temperature == 18.5
+    assert entity.current_humidity == 56
+
+
+def test_missing_external_humidity_falls_back_independently() -> None:
+    class MissingExternalHumidity(NullExternalTemperature):
+        def configured(self, thermostat_id: str) -> bool:
+            del thermostat_id
+            return True
+
+        def external_temperature(self, thermostat_id: str) -> float:
+            del thermostat_id
+            return 18.5
+
+    entity = climate_entity(
+        thermostat(DaikinThermostatMode.OFF),
+        external_temperature=MissingExternalHumidity(),
+    )
+
+    entity.update_entity_attributes()
+
+    assert entity.current_temperature == 18.5
+    assert entity.current_humidity == 40
 
 
 def test_native_auto_target_writes_auto_setpoint() -> None:

@@ -442,13 +442,15 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         external_temperature = self._data.external_temperature.external_temperature(self._device.id)
         self._attr_current_temperature = (
             external_temperature
-            if self._data.external_temperature.configured(self._device.id)
-            and logical_mode in (HVACMode.HEAT, HVACMode.COOL, HVACMode.HEAT_COOL)
-            and self._device.mode is not DaikinThermostatMode.AUX_HEAT
-            and external_temperature is not None
+            if self._data.external_temperature.configured(self._device.id) and external_temperature is not None
             else self._device.indoor_temperature.celsius
         )
-        self._attr_current_humidity = self._device.indoor_humidity
+        external_humidity = self._data.external_temperature.external_humidity(self._device.id)
+        self._attr_current_humidity = (
+            external_humidity
+            if self._data.external_temperature.configured(self._device.id) and external_humidity is not None
+            else self._device.indoor_humidity
+        )
 
         # hvac current mode and preset
         self._attr_preset_mode = DaikinOneThermostatPresetMode.NONE.value
@@ -525,6 +527,8 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
                     "internal_temperature": self._device.indoor_temperature.celsius,
                     "external_temperature_sensor": external_config.sensor_entity_id,
                     "external_temperature": external_temperature,
+                    "external_humidity_sensor": external_config.humidity_sensor_entity_id,
+                    "external_humidity": external_humidity,
                     "external_control_status": external_state.status.value,
                     "heating_bias": external_state.heat_bias,
                     "cooling_bias": external_state.cool_bias,

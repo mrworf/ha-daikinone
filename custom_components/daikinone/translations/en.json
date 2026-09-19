@@ -58,10 +58,11 @@
         }
       },
       "external_temperature_head": {
-        "title": "External temperature control for {head}",
-        "description": "Home Assistant will display the selected sensor and slowly adapt the physical Daikin setpoint. The Daikin controller may show a different target.",
+        "title": "External environmental control for {head}",
+        "description": "Home Assistant will display the selected temperature and optional humidity sensors, and slowly adapt the physical Daikin setpoint. The Daikin controller may show a different target.",
         "data": {
           "sensor_entity_id": "Temperature sensor",
+          "humidity_sensor_entity_id": "Humidity sensor (optional)",
           "max_bias": "Maximum setpoint bias",
           "delete_external_control": "Disable external temperature control"
         }
@@ -73,7 +74,8 @@
       "unknown_head": "One or more selected heads are no longer available.",
       "different_locations": "All selected heads must be in the same Daikin location.",
       "duplicate_head": "An indoor head can belong to only one heat pump.",
-      "not_temperature_sensor": "Select an available sensor with the temperature device class."
+      "not_temperature_sensor": "Select an available sensor with the temperature device class.",
+      "not_humidity_sensor": "Select an available sensor with the humidity device class."
     }
   },
   "exceptions": {
