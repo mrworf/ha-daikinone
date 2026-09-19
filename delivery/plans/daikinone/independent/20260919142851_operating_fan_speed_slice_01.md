@@ -64,3 +64,9 @@ No new authority is introduced. Writes use the existing authenticated Daikin dev
 
 Commit the plan, complete fan-control behavior, compatibility cleanup, documentation, and tests as one coherent
 payload, followed only by the required provenance closeout.
+
+## Completion
+
+- Status: complete.
+- Payload commit: `305035ee434d8b88e0393ace9f5fe90ae7bfb543`.
+- Validation: 61 tests passed; Pyright, Ruff, Black, JSON parsing, and Git whitespace checks passed.

@@ -27,4 +27,5 @@ High `7`, Auto `10`, and Quiet `11`. It reads and writes `iduHeatFanSpeed`, `idu
 ## Transaction
 
 - Parent commit: `724e6cea401c54762b2ac7aa8d1f316691aedb1f`.
-- Payload commit: recorded by the provenance closeout after delivery.
+- Payload commit: `305035ee434d8b88e0393ace9f5fe90ae7bfb543`.
+- Slice status: complete.
