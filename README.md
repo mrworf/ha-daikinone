@@ -6,6 +6,12 @@ A custom component for Home Assistant to integrate with Daikin One+ smart HVAC s
 
 - [Daikin One for Home Assistant](#daikin-one-for-home-assistant)
   - [Features](#features)
+    - [Configure menu](#configure-menu)
+    - [Mini-split heat-pump grouping, power, and energy](#mini-split-heat-pump-grouping-power-and-energy)
+    - [Emulated Heat/Cool](#emulated-heatcool)
+    - [Optional external room temperature](#optional-external-room-temperature)
+    - [Fan and vane controls](#fan-and-vane-controls)
+    - [Diagnostics](#diagnostics)
   - [Todo](#todo)
   - [Supported Equipment](#supported-equipment)
     - [Thermostats](#thermostats)
@@ -19,23 +25,58 @@ A custom component for Home Assistant to integrate with Daikin One+ smart HVAC s
 
 ## Features
 
-- Controllable climate entities for each thermostat
-- Native Daikin Auto with its single target temperature, plus an emulated Heat/Cool range mode
-- All HVAC modes supported by the Daikin One+ system, including Emergency Heat
-- Intelligent handling of thermostat updates for ultra-fast response times
-- Sensors for status, temperatures, airflow, demand, etc. for all connected equipment
-- Automatically discovered outdoor heat-pump devices with instantaneous power and cumulative energy sensors
-- Outdoor and indoor air quality sensors (if reported by your system)
+- Climate entities for Daikin One thermostats and compatible mini-split indoor heads
+- Heat, Cool, Off, native Daikin Auto, and coordinated emulated Heat/Cool; Emergency Heat appears only when the
+  equipment reports an auxiliary heat source
+- Mode-specific operating fan speeds: Auto, Quiet, Low, Medium Low, Medium, Medium High, and High
+- Capability-detected vertical vane control with Fixed and Oscillate swing modes
+- Optional external room temperature and humidity display with continuously learned heating and cooling setpoint
+  bias
+- Automatic or manually managed multi-head heat-pump grouping, with live power consumption in watts and cumulative
+  energy consumption in kWh
+- Separate circulation mode and speed controls on unitary systems that report those capabilities
+- Equipment telemetry for temperatures, airflow, demand, compressor operation, power, and other reported values
+- Outdoor and indoor air-quality sensors when reported by the equipment
+- Downloadable integration and device diagnostics, including external-sensor readings and adaptive-control state
 
-### Mini-split heat-pump grouping and energy
+### Configure menu
+
+Open **Settings → Devices & services → Daikin One → Configure** (the cogwheel menu). Changes are staged while you
+move between menu pages and are saved when you select **Save changes**.
+
+- **Edit a heat pump** appears when at least one heat-pump group exists. Select a group to change its name or
+  connected indoor heads, or enable **Delete this heat pump** to remove it. Removing a group also removes that
+  group's power and energy entities.
+- **Add a heat pump** creates a named outdoor-unit group and assigns its indoor heads. A head can belong to only one
+  group, and every head in a group must be in the same Daikin location. The integration automatically selects the
+  member with the best cumulative-energy telemetry as the group's energy source.
+- **Emulated Heat/Cool settings** contains three global controls:
+  - **Temperature tolerance** sets the distance from a target before a head requests heating or cooling. Range:
+    0–5 °C; default: 0.5 °C.
+  - **Minimum direction time** prevents a shared outdoor unit from switching between heating and cooling too
+    quickly. Range: 0–120 minutes; default: 15 minutes.
+  - **Convert external Daikin Auto to emulated Heat/Cool** determines whether selecting Auto from a Daikin remote or
+    app is adopted as Home Assistant's emulated range mode. It is disabled by default.
+- **External temperature sensors** first asks which indoor head to configure, then provides:
+  - **Temperature sensor**, a required Home Assistant sensor with the temperature device class.
+  - **Humidity sensor**, an optional Home Assistant sensor with the humidity device class.
+  - **Maximum setpoint bias**, the largest difference Home Assistant may apply between the displayed logical target
+    and the physical target sent to Daikin. Range: 0.5–10 °C in 0.5 °C steps; default: 5 °C.
+  - **Disable external temperature control**, shown for an already configured head. Disabling restores unbiased
+    logical heat and cool targets but does not automatically re-enable the Daikin schedule.
+- **Save changes** persists every staged grouping, emulation, and external-sensor setting and reloads the integration.
+
+### Mini-split heat-pump grouping, power, and energy
 
 For multi-head mini-split systems, Daikin reports outdoor-unit telemetry through each connected indoor head but does
 not expose an outdoor-unit serial number. The integration compares the reported outdoor telemetry once, creates a
 stable heat-pump grouping, and then stores that grouping so changing readings cannot move entities between devices.
 
-Each discovered heat pump exposes **Power** in watts and **Energy consumption** in kWh. The energy value is an
-estimated cumulative counter reported by Daikin and can be selected as an electricity source in Home Assistant's
-Energy dashboard.
+Each discovered outdoor heat pump exposes two consumption entities:
+
+- **Power** is the current power consumption in watts and can be used for live monitoring and automations.
+- **Energy consumption** is Daikin's estimated cumulative consumption in kWh. It uses Home Assistant's
+  `total_increasing` state class and can be selected as an electricity source in the Energy dashboard.
 
 If automatic discovery is uncertain, the affected heads remain fully functional and Home Assistant raises a repair
 notice. Open the Daikin One integration's **Configure** dialog to add, rename, remove, or correct heat-pump groups.
@@ -50,6 +91,11 @@ distinct automatic modes:
 - **Heat/Cool** is managed by this integration and uses Home Assistant's low and
   high target temperatures. The head is switched between Heat, Cool, and Off as
   needed.
+
+**Emergency Heat** is exposed as a preset only when Daikin explicitly reports an
+auxiliary heat source. It bypasses normal compressor heating and uses auxiliary
+heating elements, so it is intended for equipment that actually supports that
+mode rather than for normal mini-split operation.
 
 Heads connected to the same outdoor heat pump are coordinated. The room furthest
 outside its configured range selects the outdoor unit's direction, with a
@@ -98,7 +144,7 @@ entity in every HVAC mode, including Off. Each reading falls back independently
 to the head's internal sensor when its external entity is invalid, unavailable,
 or stale.
 
-### Fan controls
+### Fan and vane controls
 
 For compatible indoor heads, the climate entity's **Fan mode** control sets the
 actual operating fan speed: Auto, Quiet, Low, Medium Low, Medium, Medium High,
@@ -119,10 +165,22 @@ for each HVAC mode. Native Heat, Cool, and Auto update their own setting, while
 emulated Heat/Cool applies one selection to both Heat and Cool. The control is
 hidden in native Off and on heads that do not report vertical-vane fields.
 
+### Diagnostics
+
+Use **Download diagnostics** on either the Daikin One integration entry or an individual device. Integration
+diagnostics contain the raw Daikin device data plus an external-control snapshot for every configured head. Device
+diagnostics limit that information to the selected device.
+
+External-control diagnostics include the configured temperature and humidity entity IDs, their current valid
+readings, maximum bias, controller status, logical targets, learned heating and cooling biases, physical targets,
+last evaluation and adjustment times, and whether a physical setpoint was limited. The same current external
+temperature, humidity, bias, and physical-target information is available as climate entity attributes while the
+feature is configured.
+
 <!-- markdownlint-disable-next-line no-inline-html -->
 <img src="docs/dashboard.png" width="350" alt="dashboard example">
 
-Dashboard source can be found [here](docs/dashboard.yaml) if you'd like you use it as a starting point for your own dashboard.
+Dashboard source can be found [here](docs/dashboard.yaml) if you'd like to use it as a starting point for your own dashboard.
 
 ## Todo
 
@@ -138,6 +196,8 @@ If you have a Daikin One+ system and your equipment is not listed here, please o
 ### Thermostats
 
 - One Touch Smart Thermostat
+- Daikin One Home-connected mini-split indoor heads; available climate, fan, and vane controls are detected from
+  each head's reported capabilities
 
 ### Air Handlers
 
@@ -145,6 +205,7 @@ If you have a Daikin One+ system and your equipment is not listed here, please o
 
 ### Heat Pumps
 
+- Multi-head mini-split outdoor units that report shared outdoor telemetry through their connected indoor heads
 - [DZ9VC](https://daikincomfort.com/products/heating-cooling/whole-house/heat-pump/dz9vc)
 - [DZ6VS](https://daikincomfort.com/products/heating-cooling/whole-house/heat-pump/daikin-fit-heat-pump-dz6vs)
 - [DZ17VSA](https://daikincomfort.com/products/heating-cooling/whole-house/heat-pump/daikin-fit-heat-pump)
