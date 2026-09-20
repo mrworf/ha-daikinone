@@ -2,13 +2,14 @@
 
 ![GitHub release (latest by date)](https://img.shields.io/github/v/release/zlangbert/ha-daikinone?style=flat-square) [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 
-A custom component for Home Assistant to integrate with Daikin One+ smart HVAC systems. This integration allows you to control your thermostats and view all the telemetry reported by your equipment.
+Daikin One for Home Assistant lets you control supported Daikin thermostats and mini-split heads from Home Assistant.
+It also shows temperatures, power use, energy use, and other data from your system.
 
 - [Daikin One for Home Assistant](#daikin-one-for-home-assistant)
   - [Features](#features)
     - [Configure menu](#configure-menu)
     - [Mini-split heat-pump grouping, power, and energy](#mini-split-heat-pump-grouping-power-and-energy)
-    - [Emulated Heat/Cool](#emulated-heatcool)
+    - [How Heat/Cool works](#how-heatcool-works)
     - [Optional external room temperature](#optional-external-room-temperature)
     - [Fan and vane controls](#fan-and-vane-controls)
     - [Diagnostics](#diagnostics)
@@ -25,157 +26,137 @@ A custom component for Home Assistant to integrate with Daikin One+ smart HVAC s
 
 ## Features
 
-- Climate entities for Daikin One thermostats and compatible mini-split indoor heads
-- Heat, Cool, Off, native Daikin Auto, and coordinated emulated Heat/Cool; Emergency Heat appears only when the
-  equipment reports an auxiliary heat source
-- Mode-specific operating fan speeds: Auto, Quiet, Low, Medium Low, Medium, Medium High, and High
-- Capability-detected vertical vane control with Fixed and Oscillate swing modes
-- Optional external room temperature and humidity display with continuously learned heating and cooling setpoint
-  bias
-- Automatic or manually managed multi-head heat-pump grouping, with live power consumption in watts and cumulative
-  energy consumption in kWh
-- Separate circulation mode and speed controls on unitary systems that report those capabilities
-- Equipment telemetry for temperatures, airflow, demand, compressor operation, power, and other reported values
-- Outdoor and indoor air-quality sensors when reported by the equipment
-- Downloadable integration and device diagnostics, including external-sensor readings and adaptive-control state
+- Control Daikin One thermostats and supported mini-split heads.
+- Choose Off, Heat, Cool, Auto, or Heat/Cool. Emergency Heat is shown only on systems that have backup heat.
+- Set the fan to Auto, Quiet, Low, Medium Low, Medium, Medium High, or High.
+- Set supported vertical vanes to Fixed or Oscillate.
+- Use a separate room sensor for temperature and humidity.
+- Group indoor heads that share one outdoor heat pump.
+- See current power use in watts and total energy use in kWh.
+- Control air circulation on systems that support it.
+- See useful system data, such as temperatures, airflow, compressor use, and air quality.
+- Download details that can help when you need support.
 
 ### Configure menu
 
-Open **Settings → Devices & services → Daikin One → Configure** (the cogwheel menu). Changes are staged while you
-move between menu pages and are saved when you select **Save changes**.
+Open **Settings → Devices & services → Daikin One → Configure**. This is the cogwheel menu.
 
-- **Edit a heat pump** appears when at least one heat-pump group exists. Select a group to change its name or
-  connected indoor heads, or enable **Delete this heat pump** to remove it. Removing a group also removes that
-  group's power and energy entities.
-- **Add a heat pump** creates a named outdoor-unit group and assigns its indoor heads. A head can belong to only one
-  group, and every head in a group must be in the same Daikin location. The integration automatically selects the
-  member with the best cumulative-energy telemetry as the group's energy source.
-- **Emulated Heat/Cool settings** contains three global controls:
-  - **Temperature tolerance** sets the distance from a target before a head requests heating or cooling. Range:
-    0–5 °C; default: 0.5 °C.
-  - **Minimum direction time** prevents a shared outdoor unit from switching between heating and cooling too
-    quickly. Range: 0–120 minutes; default: 15 minutes.
-  - **Convert external Daikin Auto to emulated Heat/Cool** determines whether selecting Auto from a Daikin remote or
-    app is adopted as Home Assistant's emulated range mode. It is disabled by default.
-- **External temperature sensors** first asks which indoor head to configure, then provides:
-  - **Temperature sensor**, a required Home Assistant sensor with the temperature device class.
-  - **Humidity sensor**, an optional Home Assistant sensor with the humidity device class.
-  - **Maximum setpoint bias**, the largest difference Home Assistant may apply between the displayed logical target
-    and the physical target sent to Daikin. Range: 0.5–10 °C in 0.5 °C steps; default: 5 °C.
-  - **Disable external temperature control**, shown for an already configured head. Disabling restores unbiased
-    logical heat and cool targets but does not automatically re-enable the Daikin schedule.
-- **Save changes** persists every staged grouping, emulation, and external-sensor setting and reloads the integration.
+You can move between the pages without losing your work. Nothing is saved until you choose **Save changes**.
+
+- **Edit a heat pump** lets you rename a heat-pump group or change which indoor heads belong to it. You can also
+  delete the group. Deleting it also removes its power and energy sensors from Home Assistant.
+- **Add a heat pump** groups the indoor heads that share one outdoor unit. Give the group a name and pick its indoor
+  heads. A head can be in only one group. All heads in a group must be in the same Daikin location. The integration
+  chooses the best head to supply the group's energy reading.
+- **Emulated Heat/Cool settings** has three settings that apply to all heads:
+  - **Temperature tolerance** says how far the room may move past a target before heating or cooling starts. You can
+    choose 0–5 °C. The default is 0.5 °C.
+  - **Minimum direction time** says how long a shared outdoor unit must wait before changing from heating to cooling,
+    or from cooling to heating. You can choose 0–120 minutes. The default is 15 minutes.
+  - **Convert external Daikin Auto to emulated Heat/Cool** controls what happens when you choose Auto in the Daikin
+    app or on a Daikin remote. When this is on, Home Assistant changes that choice to its own Heat/Cool mode. This is
+    off by default.
+- **External temperature sensors** lets you set up one indoor head at a time:
+  - **Temperature sensor** is the room sensor that Home Assistant will use. It is required.
+  - **Humidity sensor** adds the room humidity to the thermostat card. It is optional.
+  - **Maximum setpoint bias** limits how much Home Assistant may change the temperature sent to the Daikin head. The
+    thermostat card still shows the temperature you chose. You can choose 0.5–10 °C in 0.5 °C steps. The default is
+    5 °C.
+  - **Disable external temperature control** stops using the room sensor for that head. This does not turn the Daikin
+    schedule back on.
+- **Save changes** saves all changes and reloads the integration.
 
 ### Mini-split heat-pump grouping, power, and energy
 
-For multi-head mini-split systems, Daikin reports outdoor-unit telemetry through each connected indoor head but does
-not expose an outdoor-unit serial number. The integration compares the reported outdoor telemetry once, creates a
-stable heat-pump grouping, and then stores that grouping so changing readings cannot move entities between devices.
+Some mini-split systems have several indoor heads connected to one outdoor heat pump. Daikin sends the outdoor
+unit's readings through the indoor heads, but does not tell us the outdoor unit's serial number. The integration
+compares those readings to work out which heads share a heat pump. It then saves the group so it does not change by
+mistake later.
 
-Each discovered outdoor heat pump exposes two consumption entities:
+Each heat-pump group gets two sensors:
 
-- **Power** is the current power consumption in watts and can be used for live monitoring and automations.
-- **Energy consumption** is Daikin's estimated cumulative consumption in kWh. It uses Home Assistant's
-  `total_increasing` state class and can be selected as an electricity source in the Energy dashboard.
+- **Power** shows how much power the heat pump is using now, in watts.
+- **Energy consumption** shows Daikin's running estimate of total energy use, in kWh. You can add this sensor to the
+  Home Assistant Energy dashboard.
 
-If automatic discovery is uncertain, the affected heads remain fully functional and Home Assistant raises a repair
-notice. Open the Daikin One integration's **Configure** dialog to add, rename, remove, or correct heat-pump groups.
-Each indoor head can belong to only one heat pump.
+If the integration is not sure which heads belong together, the heads will still work. Home Assistant will show a
+repair notice. Use the **Configure** menu to add or fix the group.
 
-### Emulated Heat/Cool
+### How Heat/Cool works
 
-For heads that support both heating and cooling, Home Assistant exposes two
-distinct automatic modes:
+Heads that can heat and cool have two automatic choices:
 
-- **Auto** is Daikin's native mode and uses one target temperature.
-- **Heat/Cool** is managed by this integration and uses Home Assistant's low and
-  high target temperatures. The head is switched between Heat, Cool, and Off as
-  needed.
+- **Auto** is controlled by Daikin. It uses one target temperature.
+- **Heat/Cool** is controlled by this integration. You set a low temperature for heat and a high temperature for
+  cooling. The integration chooses Heat, Cool, or Off as the room changes.
 
-**Emergency Heat** is exposed as a preset only when Daikin explicitly reports an
-auxiliary heat source. It bypasses normal compressor heating and uses auxiliary
-heating elements, so it is intended for equipment that actually supports that
-mode rather than for normal mini-split operation.
+**Emergency Heat** is shown only when Daikin says the system has backup heat. It uses backup heating instead of the
+heat pump. It is not shown on normal mini-split heads.
 
-Heads connected to the same outdoor heat pump are coordinated. The room furthest
-outside its configured range selects the outdoor unit's direction, with a
-configurable hysteresis and minimum direction time to reduce cycling. Explicit
-Heat, Cool, or native Auto commands take priority; incompatible emulated heads
-remain off and show their reason in the `emulation_status` attribute. Home
-Assistant also shows a temporary notification while manual control suspends an
-emulated head.
+All heads on one outdoor heat pump must heat or cool together. If different rooms ask for different things, the room
+that is furthest from its target chooses the direction. The temperature tolerance and wait time help stop the system
+from changing direction too often.
 
-The integration options configure the global temperature tolerance, minimum
-direction time, and whether an Auto selection made outside Home Assistant should
-be converted to emulated Heat/Cool. External Auto conversion is disabled by
-default. Physical remote Heat, Cool, and Off commands leave emulated mode and are
-respected after the integration has distinguished them from a recently sent
-cloud command.
+Choosing Heat, Cool, Auto, or Off by hand takes control away from Heat/Cool mode. This includes choices made with a
+Daikin remote or app. You may turn on **Convert external Daikin Auto to emulated Heat/Cool** if you want an Auto
+choice from the Daikin app or remote to start Home Assistant's Heat/Cool mode instead.
 
 ### Optional external room temperature
 
-The integration can use any Home Assistant temperature sensor as the room
-temperature for an individual head. Open the integration's **Configure** dialog,
-choose **External temperature sensors**, select the head and sensor, and set the
-maximum allowed bias. The default maximum is 5 °C. You can also select an
-optional humidity sensor, since Home Assistant normally exposes temperature and
-humidity from the same physical device as separate entities.
+You can use a Home Assistant room sensor instead of the sensor inside a Daikin head. Open **Configure**, choose
+**External temperature sensors**, choose the head, and then choose a temperature sensor. You can also choose a
+humidity sensor.
 
-In Heat, Cool, and emulated Heat/Cool, Home Assistant keeps showing the desired
-logical target. The integration slowly learns a separate heating and cooling
-bias and sends a different physical target to the Daikin head. It adjusts by
-0.5 °C only after the room remains more than 0.3 °C from target for 15 minutes,
-and keeps relearning while enabled so seasonal or room changes do not leave a
-stale calibration. This retains the head's own inverter control instead of
-turning it into a binary on/off device. Native Daikin Auto and Emergency Heat
-are not adaptively biased.
+The sensor inside a head can warm up or cool down faster than the rest of the room. To handle this, Home Assistant
+may send a different target to the head than the target shown on the thermostat card. It learns one adjustment for
+heating and another for cooling.
 
-While enabled, Home Assistant disables that head's native Daikin schedule and
-owns its logical target. A target changed on a Daikin controller or remote is
-adopted as the new logical target after cloud-command propagation is ruled out.
-If the external sensor is unavailable or has not updated for 30 minutes, the
-current learned bias and physical target are frozen and Home Assistant falls
-back to displaying and using the head's internal temperature. Removing the
-external-sensor configuration restores the unbiased logical heat and cool
-targets; it does not re-enable the Daikin schedule automatically.
+The adjustment changes by 0.5 °C only when the room has stayed more than 0.3 °C from the target for 15 minutes. It
+keeps learning while the feature is on, so it can follow changes in the room or the seasons. The **Maximum setpoint
+bias** limits the adjustment. The default limit is 5 °C.
 
-Fresh configured temperature and humidity readings are shown on the climate
-entity in every HVAC mode, including Off. Each reading falls back independently
-to the head's internal sensor when its external entity is invalid, unavailable,
-or stale.
+This lets the heat pump keep changing its output smoothly. Home Assistant does not simply turn it fully on and off.
+The adjustment works in Heat, Cool, and Home Assistant's Heat/Cool mode. It does not work in Daikin Auto or Emergency
+Heat.
+
+Home Assistant turns off the head's Daikin schedule while this feature is on. If you change the target with a Daikin
+controller or remote, Home Assistant uses that as the new target.
+
+The thermostat card shows the room sensor's temperature and humidity even when the head is off. If a reading is bad,
+missing, or more than 30 minutes old, Home Assistant falls back to the sensor inside the head. Learning pauses until
+the room sensor works again. Turning off external temperature control removes the adjustment, but does not turn the
+Daikin schedule back on.
 
 ### Fan and vane controls
 
-For compatible indoor heads, the climate entity's **Fan mode** control sets the
-actual operating fan speed: Auto, Quiet, Low, Medium Low, Medium, Medium High,
-or High. Daikin stores a separate speed for each HVAC mode, so Heat, Cool, and
-native Auto change only their own speed. Emulated Heat/Cool applies the selected
-speed to both Heat and Cool and remains adjustable while the controller has the
-head physically off between calls for heating or cooling.
+On supported indoor heads, **Fan mode** sets the blower speed. The choices are Auto, Quiet, Low, Medium Low, Medium,
+Medium High, and High.
 
-Native Off hides the operating fan control. If a unitary thermostat reports
-Daikin's separate circulation controls, Home Assistant exposes them as
-**Circulation Mode** and **Circulation Speed** selects. These selects are not
-created for mini-split heads whose API payload does not contain the corresponding
-circulation fields.
+Daikin remembers a different fan speed for Heat, Cool, and Auto. Changing the speed in one mode does not change the
+others. Home Assistant's Heat/Cool mode uses the same chosen speed for both heating and cooling. You can still change
+it while the room does not need heating or cooling.
 
-Compatible mini-split heads also expose **Swing mode** with Fixed and Oscillate
-for the vertical vane. Like fan speed, Daikin stores vane behavior separately
-for each HVAC mode. Native Heat, Cool, and Auto update their own setting, while
-emulated Heat/Cool applies one selection to both Heat and Cool. The control is
-hidden in native Off and on heads that do not report vertical-vane fields.
+Fan mode is hidden when the head is set to Off. Some whole-home systems also have separate **Circulation Mode** and
+**Circulation Speed** controls. These appear only when the system supports them. They are separate from the fan speed
+used while heating or cooling.
+
+Supported mini-split heads also have **Swing mode** for the vertical vane:
+
+- **Fixed** keeps the vane in one position.
+- **Oscillate** moves the vane up and down.
+
+Daikin remembers a different vane choice for Heat, Cool, and Auto. Home Assistant's Heat/Cool mode uses the same
+choice for heating and cooling. Swing mode is hidden when the head is Off. It is also hidden if the head does not
+support this control.
 
 ### Diagnostics
 
-Use **Download diagnostics** on either the Daikin One integration entry or an individual device. Integration
-diagnostics contain the raw Daikin device data plus an external-control snapshot for every configured head. Device
-diagnostics limit that information to the selected device.
+Use **Download diagnostics** on the Daikin One integration page or on a device page. This file gives a support person
+details about your Daikin system and this integration.
 
-External-control diagnostics include the configured temperature and humidity entity IDs, their current valid
-readings, maximum bias, controller status, logical targets, learned heating and cooling biases, physical targets,
-last evaluation and adjustment times, and whether a physical setpoint was limited. The same current external
-temperature, humidity, bias, and physical-target information is available as climate entity attributes while the
-feature is configured.
+The integration file covers all devices. A device file covers only that device. If you use a separate room sensor,
+the file also includes its current temperature and humidity, the learned heating and cooling adjustments, the targets
+used by Home Assistant and Daikin, and the time of the last update.
 
 <!-- markdownlint-disable-next-line no-inline-html -->
 <img src="docs/dashboard.png" width="350" alt="dashboard example">
@@ -189,15 +170,15 @@ Dashboard source can be found [here](docs/dashboard.yaml) if you'd like to use i
 
 ## Supported Equipment
 
-The following is the list of currently confirmed working equipment.
+The equipment below is known to work.
 
-If you have a Daikin One+ system and your equipment is not listed here, please open an issue and we can work on adding support. Your raw Daikin API data can be retrieved by clicking "Download Diagnostics" on a thermostat's device page in Home Assistant. That information will be required to add support for your equipment.
+If your Daikin One+ equipment is not listed, please open an issue. We can work with you to add support. We will need
+a diagnostics file from the device page in Home Assistant. Choose **Download diagnostics** to get it.
 
 ### Thermostats
 
 - One Touch Smart Thermostat
-- Daikin One Home-connected mini-split indoor heads; available climate, fan, and vane controls are detected from
-  each head's reported capabilities
+- Daikin One Home-connected mini-split indoor heads. Home Assistant shows only the controls that each head supports.
 
 ### Air Handlers
 
@@ -205,7 +186,7 @@ If you have a Daikin One+ system and your equipment is not listed here, please o
 
 ### Heat Pumps
 
-- Multi-head mini-split outdoor units that report shared outdoor telemetry through their connected indoor heads
+- Multi-head mini-split outdoor units that send the same outdoor readings through their indoor heads
 - [DZ9VC](https://daikincomfort.com/products/heating-cooling/whole-house/heat-pump/dz9vc)
 - [DZ6VS](https://daikincomfort.com/products/heating-cooling/whole-house/heat-pump/daikin-fit-heat-pump-dz6vs)
 - [DZ17VSA](https://daikincomfort.com/products/heating-cooling/whole-house/heat-pump/daikin-fit-heat-pump)
@@ -223,25 +204,26 @@ If you have a Daikin One+ system and your equipment is not listed here, please o
 
 ### Install via HACS
 
-_HACS must be [installed](https://hacs.xyz/docs/installation/prerequisites) before following these steps._
+You must [install HACS](https://hacs.xyz/docs/installation/prerequisites) first.
 
-1. Log into your Home Assistant instance and open HACS via the sidebar on the left.
-2. In the HACS console, open **Integrations**.
-3. On the integrations page, select the "vertical dots" icon in the top-right corner, and select **Custom repositories**.
-4. Paste `https://github.com/zlangbert/ha-daikinone` into the **Add custom repository URL** box and select **Integration** in the **Category** menu.
+1. Open HACS from the Home Assistant sidebar.
+2. Open **Integrations**.
+3. Select the three dots in the top-right corner. Then choose **Custom repositories**.
+4. Paste `https://github.com/zlangbert/ha-daikinone` into **Add custom repository URL**. Choose **Integration** as
+   the category.
 5. Select **Add**.
-6. Restart Home Assistant
-7. Click the below button to add the integration and start setup
+6. Restart Home Assistant.
+7. Select the button below to add the integration and start setup.
 
 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=daikinone)
 
 ### Manual Install
 
-_A manual installation is more risky than installation via HACS. You must be familiar with how to SSH into Home Assistant and working in the Linux shell to perform these steps._
+Manual installation is for people who are comfortable using SSH and the Linux command line. HACS is easier and safer.
 
-1. Download or clone this repository
-2. Copy the `custom_components/daikinone` folder from the repository to your Home Assistant `custom_components` folder
-3. Restart Home Assistant
-4. Click the below button to add the integration and start setup
+1. Download or clone this repository.
+2. Copy the `custom_components/daikinone` folder into the `custom_components` folder in Home Assistant.
+3. Restart Home Assistant.
+4. Select the button below to add the integration and start setup.
 
 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=daikinone)
