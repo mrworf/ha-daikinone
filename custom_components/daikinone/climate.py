@@ -146,6 +146,7 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
                 logical_mode = None
             attributes = cast(dict[str, Any], last_state.attributes)  # pyright: ignore[reportUnknownMemberType]
             previous_physical = cast(object, attributes.get("emulation_physical_mode"))
+            native_auto_selected_in_ha = cast(object, attributes.get("native_auto_selected_in_ha"))
             physical_mode: DaikinThermostatMode | None = None
             try:
                 if isinstance(previous_physical, (int, str)):
@@ -153,7 +154,12 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
             except ValueError:
                 pass
             if logical_mode is not None:
-                self._data.emulation.restore(self._device.id, logical_mode, physical_mode)
+                self._data.emulation.restore(
+                    self._device.id,
+                    logical_mode,
+                    physical_mode,
+                    native_auto_selected_in_ha if isinstance(native_auto_selected_in_ha, bool) else None,
+                )
                 self.update_entity_attributes()
 
     async def async_will_remove_from_hass(self) -> None:
@@ -601,6 +607,7 @@ class DaikinOneThermostat(DaikinOneEntity[DaikinThermostat], ClimateEntity):
         emulation_status = self._data.emulation.status(self._device.id)
         self._attr_extra_state_attributes = {
             "emulation_physical_mode": self._data.emulation.expected_physical_mode(self._device.id).value,
+            "native_auto_selected_in_ha": self._data.emulation.native_auto_selected_in_ha(self._device.id),
         }
         if emulation_status is not None:
             self._attr_extra_state_attributes["emulation_status"] = emulation_status.value

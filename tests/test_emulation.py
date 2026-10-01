@@ -323,6 +323,39 @@ def test_external_auto_conversion_is_opt_in() -> None:
     assert controller.logical_mode("intentional") is HVACMode.AUTO
 
 
+def test_external_auto_present_at_registration_is_converted() -> None:
+    device = head("living", 21, mode=DaikinThermostatMode.AUTO)
+
+    controller, _ = make_controller([device], options={CONF_OPTION_CONVERT_EXTERNAL_AUTO: True})
+
+    assert controller.logical_mode("living") is HVACMode.HEAT_COOL
+
+
+def test_restored_ha_native_auto_is_not_converted() -> None:
+    device = head("living", 21, mode=DaikinThermostatMode.AUTO)
+    controller, _ = make_controller([device], options={CONF_OPTION_CONVERT_EXTERNAL_AUTO: True})
+
+    controller.restore(
+        "living",
+        HVACMode.AUTO,
+        DaikinThermostatMode.AUTO,
+        native_auto_selected_in_ha=True,
+    )
+
+    assert controller.logical_mode("living") is HVACMode.AUTO
+    assert controller.native_auto_selected_in_ha("living") is True
+
+
+def test_restored_auto_without_ha_source_is_converted() -> None:
+    device = head("living", 21, mode=DaikinThermostatMode.AUTO)
+    controller, _ = make_controller([device], options={CONF_OPTION_CONVERT_EXTERNAL_AUTO: True})
+
+    controller.restore("living", HVACMode.AUTO, DaikinThermostatMode.AUTO)
+
+    assert controller.logical_mode("living") is HVACMode.HEAT_COOL
+    assert controller.native_auto_selected_in_ha("living") is False
+
+
 def test_unassigned_known_mini_split_does_not_support_emulation() -> None:
     device = head("unassigned", 21, heat_pump_id=None)
     controller, daikin = make_controller([device])

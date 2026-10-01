@@ -135,6 +135,10 @@ class DaikinEmulationController:
     def register(self, thermostat: DaikinThermostat, callback: Callable[[], None]) -> None:
         """Register a climate entity before it is added to Home Assistant."""
         logical_mode = mode_to_hvac(thermostat.mode)
+        if logical_mode is HVACMode.AUTO and self.convert_external_auto and self.supports_emulation(thermostat):
+            # Treat Auto found at startup as external unless restored state later
+            # proves that native Auto was deliberately selected in Home Assistant.
+            logical_mode = HVACMode.HEAT_COOL
         default_mode = (
             HVACMode.HEAT
             if DaikinThermostatCapability.HEAT in thermostat.capabilities
@@ -163,6 +167,10 @@ class DaikinEmulationController:
     def expected_physical_mode(self, thermostat_id: str) -> DaikinThermostatMode:
         return self._heads[thermostat_id].expected_mode
 
+    def native_auto_selected_in_ha(self, thermostat_id: str) -> bool:
+        """Return whether native Auto was deliberately selected in Home Assistant."""
+        return self._heads[thermostat_id].native_auto_selected_in_ha
+
     def supports_emulation(self, thermostat: DaikinThermostat) -> bool:
         """Reject known mini-split heads whose outdoor group is unresolved."""
         return thermostat.id not in self._daikin.get_heat_pump_candidate_ids() or thermostat.heat_pump_id is not None
@@ -172,6 +180,7 @@ class DaikinEmulationController:
         thermostat_id: str,
         logical_mode: HVACMode,
         previous_physical_mode: DaikinThermostatMode | None,
+        native_auto_selected_in_ha: bool | None = None,
     ) -> None:
         """Restore emulated/native-Auto intent without overriding remote changes made while HA was down."""
         record = self._heads[thermostat_id]
@@ -187,8 +196,12 @@ class DaikinEmulationController:
             else:
                 record.logical_mode = HVACMode.HEAT_COOL
         elif logical_mode is HVACMode.AUTO and thermostat.mode is DaikinThermostatMode.AUTO:
-            record.logical_mode = HVACMode.AUTO
-            record.native_auto_selected_in_ha = True
+            if self.convert_external_auto and native_auto_selected_in_ha is not True:
+                record.logical_mode = HVACMode.HEAT_COOL
+                record.native_auto_selected_in_ha = False
+            else:
+                record.logical_mode = HVACMode.AUTO
+                record.native_auto_selected_in_ha = True
         record.expected_mode = thermostat.mode
         if record.logical_mode is not HVACMode.OFF:
             record.previous_mode = record.logical_mode

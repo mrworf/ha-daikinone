@@ -151,6 +151,9 @@ def climate_entity(
         def expected_physical_mode(self, thermostat_id: str) -> DaikinThermostatMode:
             return device.mode
 
+        def native_auto_selected_in_ha(self, thermostat_id: str) -> bool:
+            return False
+
         def previous_mode(self, thermostat_id: str) -> HVACMode:
             return HVACMode.HEAT
 
