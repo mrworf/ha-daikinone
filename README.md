@@ -32,7 +32,7 @@ It also shows temperatures, power use, energy use, and other data from your syst
 - Set supported vertical vanes to Fixed or Oscillate.
 - Use a separate room sensor for temperature and humidity.
 - Group indoor heads that share one outdoor heat pump.
-- See current power use in watts and total energy use in kWh.
+- See outdoor temperature, operating state, defrost, compressor activity, power use, and total energy use.
 - Control air circulation on systems that support it.
 - See useful system data, such as temperatures, airflow, compressor use, and air quality.
 - Download details that can help when you need support.
@@ -73,11 +73,20 @@ unit's readings through the indoor heads, but does not tell us the outdoor unit'
 compares those readings to work out which heads share a heat pump. It then saves the group so it does not change by
 mistake later.
 
-Each heat-pump group gets two sensors:
+Each heat-pump group gets these main sensors:
 
 - **Power** shows how much power the heat pump is using now, in watts.
 - **Energy consumption** shows Daikin's running estimate of total energy use, in kWh. You can add this sensor to the
   Home Assistant Energy dashboard.
+- **Outdoor temperature** shows the temperature measured by the outdoor unit.
+- **Operating state** shows Idle, Heating, Cooling, Defrosting, or Unknown.
+- **Defrost** turns on while the outdoor unit is clearing ice.
+
+The device also has diagnostic sensors for compressor frequency, outdoor fan speed, and electrical current. These
+can help you see how hard the heat pump is working.
+
+Daikin sends a copy of the outdoor readings through each indoor head. The copies may update at slightly different
+times. The integration combines the current readings from online heads so one old copy does not cause a large jump.
 
 If the integration is not sure which heads belong together, the heads will still work. Home Assistant will show a
 repair notice. Use the **Configure** menu to add or fix the group.

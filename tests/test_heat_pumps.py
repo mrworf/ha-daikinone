@@ -7,13 +7,26 @@ from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor.const import SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy, UnitOfPower
+from homeassistant.const import (
+    EntityCategory,
+    REVOLUTIONS_PER_MINUTE,
+    UnitOfElectricCurrent,
+    UnitOfEnergy,
+    UnitOfFrequency,
+    UnitOfPower,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import Entity
 
 from custom_components.daikinone import _update_heat_pump_grouping_issue
+from custom_components.daikinone.binary_sensor import (
+    DaikinOneHeatPumpBinarySensor,
+    async_setup_entry as async_setup_binary_sensors,
+)
 from custom_components.daikinone.config_flow import (
     CONF_DELETE_GROUP,
     CONF_GROUP_ID,
@@ -32,6 +45,7 @@ from custom_components.daikinone.daikinone import (
     DaikinDeviceDataResponse,
     DaikinHeatPump,
     DaikinHeatPumpGroup,
+    DaikinHeatPumpOperatingState,
     DaikinOne,
     DaikinUserCredentials,
     discover_heat_pump_groups,
@@ -50,6 +64,9 @@ def _payload(
     fan_speed: float,
     discharge: float,
     outdoor_temperature: float,
+    current: float = 0,
+    defrost: bool = False,
+    outdoor_mode: int = 2,
     online: bool = True,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -59,8 +76,10 @@ def _payload(
         "oduConnectedIduUnitNumber": connected,
         "oduConsumedPower": power,
         "oduIntPowerConsumption": energy,
-        "oduOperatingMode": 2,
+        "oduOperatingMode": outdoor_mode,
         "oduOutdoorTemp": outdoor_temperature,
+        "oduConsumedCurrent": current,
+        "oduDefrost": defrost,
         "oduCompCurrentFrequency": frequency,
         "oduFanMotorCurrentSpeed": fan_speed,
         "oduCompDischargeTemp": discharge,
@@ -91,11 +110,32 @@ def _six_head_payloads() -> list[dict[str, Any]]:
             fan_speed=510,
             discharge=29,
             outdoor_temperature=15.5,
+            current=0.7,
         ),
         _payload(
-            "kira", "Kira's bedroom", 3, 591.4, 120, frequency=10, fan_speed=540, discharge=26, outdoor_temperature=15.5
+            "kira",
+            "Kira's bedroom",
+            3,
+            591.4,
+            120,
+            frequency=10,
+            fan_speed=540,
+            discharge=26,
+            outdoor_temperature=15.5,
+            current=0.5,
         ),
-        _payload("study", "Study", 3, 577.0, 160, frequency=10, fan_speed=510, discharge=28, outdoor_temperature=15.5),
+        _payload(
+            "study",
+            "Study",
+            3,
+            577.0,
+            160,
+            frequency=10,
+            fan_speed=510,
+            discharge=28,
+            outdoor_temperature=15.5,
+            current=0.6,
+        ),
         _payload("dining", "Dining room", 4, 1631.9, 0, frequency=0, fan_speed=0, discharge=19, outdoor_temperature=15),
         _payload(
             "master", "Master Bedroom", 4, 1626.8, 0, frequency=0, fan_speed=0, discharge=19, outdoor_temperature=15
@@ -113,6 +153,16 @@ def _connector(payloads: list[dict[str, Any]], groups: list[dict[str, Any]] | No
     return connector
 
 
+def _group(*thermostat_ids: str) -> dict[str, Any]:
+    return DaikinHeatPumpGroup(
+        id="heat-pump",
+        name="Heat Pump",
+        location_id="location",
+        thermostat_ids=thermostat_ids,
+        energy_source_id=thermostat_ids[0],
+    ).as_dict()
+
+
 def test_discovers_two_heat_pumps_and_aggregates_power() -> None:
     connector = _connector(_six_head_payloads())
     asyncio.run(connector.update())
@@ -128,6 +178,12 @@ def test_discovers_two_heat_pumps_and_aggregates_power() -> None:
     assert active.power_usage == 160
     assert active.energy_source_id == "kira"
     assert active.energy_consumption == 591.4
+    assert active.outdoor_temperature == 15.5
+    assert active.operating_state is DaikinHeatPumpOperatingState.COOLING
+    assert active.defrost is False
+    assert active.compressor_frequency == 10
+    assert active.outdoor_fan_speed == 510
+    assert active.current == 0.6
 
     for thermostat in connector.get_thermostats().values():
         assert thermostat.heat_pump_id in heat_pumps
@@ -152,6 +208,198 @@ def test_persisted_groups_do_not_regroup_when_telemetry_changes() -> None:
         ("bath", "kira", "study"),
         ("dining", "living", "master"),
     }
+
+
+@pytest.mark.parametrize(
+    ("power", "frequency", "outdoor_mode", "defrost", "expected"),
+    [
+        (0, 0, 1, False, DaikinHeatPumpOperatingState.IDLE),
+        (900, 30, 1, False, DaikinHeatPumpOperatingState.HEATING),
+        (900, 30, 2, False, DaikinHeatPumpOperatingState.COOLING),
+        (0, 0, 1, True, DaikinHeatPumpOperatingState.DEFROSTING),
+        (900, 30, 9, False, DaikinHeatPumpOperatingState.UNKNOWN),
+    ],
+)
+def test_heat_pump_operating_state(
+    power: float,
+    frequency: float,
+    outdoor_mode: int,
+    defrost: bool,
+    expected: DaikinHeatPumpOperatingState,
+) -> None:
+    payload = _payload(
+        "head",
+        "Head",
+        1,
+        10,
+        power,
+        frequency=frequency,
+        fan_speed=500,
+        discharge=30,
+        outdoor_temperature=12,
+        outdoor_mode=outdoor_mode,
+        defrost=defrost,
+    )
+    connector = _connector([payload], [_group("head")])
+
+    asyncio.run(connector.update())
+
+    assert connector.get_heat_pump("heat-pump").operating_state is expected
+
+
+def test_active_conflicting_directions_report_unknown() -> None:
+    heating = _payload(
+        "heat",
+        "Heat",
+        2,
+        10,
+        900,
+        frequency=30,
+        fan_speed=500,
+        discharge=30,
+        outdoor_temperature=12,
+        outdoor_mode=1,
+    )
+    cooling = _payload(
+        "cool",
+        "Cool",
+        2,
+        11,
+        900,
+        frequency=30,
+        fan_speed=500,
+        discharge=30,
+        outdoor_temperature=12,
+        outdoor_mode=2,
+    )
+    connector = _connector([heating, cooling], [_group("heat", "cool")])
+
+    asyncio.run(connector.update())
+
+    assert connector.get_heat_pump("heat-pump").operating_state is DaikinHeatPumpOperatingState.UNKNOWN
+
+
+def test_optional_telemetry_uses_valid_online_members() -> None:
+    first = _payload(
+        "first",
+        "First",
+        3,
+        10,
+        800,
+        frequency=20,
+        fan_speed=500,
+        discharge=30,
+        outdoor_temperature=10,
+        current=4,
+        defrost=False,
+        outdoor_mode=1,
+    )
+    second = _payload(
+        "second",
+        "Second",
+        3,
+        11,
+        1000,
+        frequency=40,
+        fan_speed=700,
+        discharge=30,
+        outdoor_temperature=14,
+        current=6,
+        defrost=True,
+        outdoor_mode=1,
+    )
+    missing = _payload(
+        "missing",
+        "Missing",
+        3,
+        12,
+        5000,
+        frequency=99,
+        fan_speed=999,
+        discharge=30,
+        outdoor_temperature=30,
+        current=99,
+        defrost=True,
+        outdoor_mode=2,
+        online=False,
+    )
+    first["data"].pop("oduDefrost")
+    first["data"].pop("oduConsumedCurrent")
+    connector = _connector([first, second, missing], [_group("first", "second", "missing")])
+
+    asyncio.run(connector.update())
+    heat_pump = connector.get_heat_pump("heat-pump")
+
+    assert heat_pump.outdoor_temperature == 12
+    assert heat_pump.compressor_frequency == 30
+    assert heat_pump.outdoor_fan_speed == 600
+    assert heat_pump.current == 6
+    assert heat_pump.defrost is True
+    assert heat_pump.operating_state is DaikinHeatPumpOperatingState.DEFROSTING
+
+
+def test_all_offline_heat_pump_readings_are_unavailable() -> None:
+    payload = _payload(
+        "offline",
+        "Offline",
+        1,
+        10,
+        900,
+        frequency=30,
+        fan_speed=500,
+        discharge=30,
+        outdoor_temperature=12,
+        current=5,
+        defrost=True,
+        online=False,
+    )
+    connector = _connector([payload], [_group("offline")])
+
+    asyncio.run(connector.update())
+    heat_pump = connector.get_heat_pump("heat-pump")
+
+    assert heat_pump.power_usage is None
+    assert heat_pump.energy_consumption is None
+    assert heat_pump.outdoor_temperature is None
+    assert heat_pump.operating_state is None
+    assert heat_pump.defrost is None
+    assert heat_pump.compressor_frequency is None
+    assert heat_pump.outdoor_fan_speed is None
+    assert heat_pump.current is None
+
+
+def test_invalid_optional_telemetry_is_unavailable_without_hiding_operation() -> None:
+    payload = _payload(
+        "head",
+        "Head",
+        1,
+        10,
+        900,
+        frequency=30,
+        fan_speed=500,
+        discharge=30,
+        outdoor_temperature=12,
+        current=5,
+        outdoor_mode=1,
+    )
+    payload["data"].update(
+        {
+            "oduCompCurrentFrequency": "fast",
+            "oduFanMotorCurrentSpeed": True,
+            "oduConsumedCurrent": "5",
+            "oduDefrost": 1,
+        }
+    )
+    connector = _connector([payload], [_group("head")])
+
+    asyncio.run(connector.update())
+    heat_pump = connector.get_heat_pump("heat-pump")
+
+    assert heat_pump.compressor_frequency is None
+    assert heat_pump.outdoor_fan_speed is None
+    assert heat_pump.current is None
+    assert heat_pump.defrost is None
+    assert heat_pump.operating_state is DaikinHeatPumpOperatingState.HEATING
 
 
 def test_missing_or_legacy_outdoor_data_is_not_discovered() -> None:
@@ -200,6 +448,12 @@ def test_heat_pump_sensor_metadata() -> None:
         energy_source_id="head",
         power_usage=123,
         energy_consumption=456.7,
+        outdoor_temperature=12.5,
+        operating_state=DaikinHeatPumpOperatingState.HEATING,
+        defrost=True,
+        compressor_frequency=42,
+        outdoor_fan_speed=780,
+        current=6.5,
     )
 
     class FakeConnector:
@@ -217,7 +471,7 @@ def test_heat_pump_sensor_metadata() -> None:
 
     asyncio.run(async_setup_entry(hass, cast(ConfigEntry, SimpleNamespace()), add_entities))
 
-    assert len(entities) == 2
+    assert len(entities) == 7
     power = next(entity for entity in entities if entity.entity_description.key == "power_usage")
     energy = next(entity for entity in entities if entity.entity_description.key == "energy_consumption")
     assert isinstance(power, DaikinOneHeatPumpSensor)
@@ -228,6 +482,56 @@ def test_heat_pump_sensor_metadata() -> None:
     assert energy.device_class is SensorDeviceClass.ENERGY
     assert energy.state_class is SensorStateClass.TOTAL_INCREASING
     assert energy.native_unit_of_measurement == UnitOfEnergy.KILO_WATT_HOUR
+
+    outdoor_temperature = next(
+        entity for entity in entities if entity.entity_description.key == "outdoor_temperature"
+    )
+    assert outdoor_temperature.device_class is SensorDeviceClass.TEMPERATURE
+    assert outdoor_temperature.native_unit_of_measurement == UnitOfTemperature.CELSIUS
+    assert outdoor_temperature.entity_category is None
+
+    operating_state = next(entity for entity in entities if entity.entity_description.key == "operating_state")
+    assert operating_state.device_class is SensorDeviceClass.ENUM
+    assert operating_state.options == [state.value for state in DaikinHeatPumpOperatingState]
+    assert operating_state.native_value is DaikinHeatPumpOperatingState.HEATING
+
+    compressor = next(entity for entity in entities if entity.entity_description.key == "compressor_frequency")
+    assert compressor.device_class is SensorDeviceClass.FREQUENCY
+    assert compressor.native_unit_of_measurement == UnitOfFrequency.HERTZ
+    assert compressor.entity_category is EntityCategory.DIAGNOSTIC
+
+    fan = next(entity for entity in entities if entity.entity_description.key == "outdoor_fan_speed")
+    assert fan.native_unit_of_measurement == REVOLUTIONS_PER_MINUTE
+    assert fan.entity_category is EntityCategory.DIAGNOSTIC
+
+    current = next(entity for entity in entities if entity.entity_description.key == "current")
+    assert current.device_class is SensorDeviceClass.CURRENT
+    assert current.native_unit_of_measurement == UnitOfElectricCurrent.AMPERE
+    assert current.entity_category is EntityCategory.DIAGNOSTIC
+
+    binary_entities: list[Any] = []
+
+    def add_binary_entities(new_entities: Iterable[Entity], update_before_add: bool = False) -> None:
+        binary_entities.extend(new_entities)
+
+    asyncio.run(async_setup_binary_sensors(hass, cast(ConfigEntry, SimpleNamespace()), add_binary_entities))
+    assert len(binary_entities) == 1
+    defrost = binary_entities[0]
+    assert isinstance(defrost, DaikinOneHeatPumpBinarySensor)
+    assert defrost.unique_id == "heat-pump-id-defrost"
+    assert defrost.device_class is BinarySensorDeviceClass.RUNNING
+    assert defrost.is_on is True
+    assert defrost.available is True
+
+    heat_pump.defrost = None
+    defrost.update_entity_attributes()
+    assert defrost.is_on is None
+    assert defrost.available is False
+
+    heat_pump.outdoor_temperature = None
+    outdoor_temperature.update_entity_attributes()
+    assert outdoor_temperature.native_value is None
+    assert outdoor_temperature.available is False
 
 
 def _options_flow(connector: DaikinOne, groups: list[dict[str, Any]]) -> DaikinOneOptionsFlow:

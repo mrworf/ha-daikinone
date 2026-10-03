@@ -2,7 +2,7 @@ import copy
 import json
 import logging
 from datetime import timedelta
-from enum import Enum, auto
+from enum import Enum, StrEnum, auto
 from statistics import median
 from urllib.parse import urljoin
 from typing import Any
@@ -169,6 +169,14 @@ class DaikinThermostatStatus(Enum):
     IDLE = 5
 
 
+class DaikinHeatPumpOperatingState(StrEnum):
+    IDLE = "Idle"
+    HEATING = "Heating"
+    COOLING = "Cooling"
+    DEFROSTING = "Defrosting"
+    UNKNOWN = "Unknown"
+
+
 @dataclass
 class DaikinThermostatSchedule:
     enabled: bool
@@ -292,6 +300,12 @@ class DaikinHeatPump(DaikinDevice):
     energy_source_id: str
     power_usage: float | None
     energy_consumption: float | None
+    outdoor_temperature: float | None
+    operating_state: DaikinHeatPumpOperatingState | None
+    defrost: bool | None
+    compressor_frequency: float | None
+    outdoor_fan_speed: float | None
+    current: float | None
 
 
 @dataclass(frozen=True)
@@ -308,6 +322,8 @@ class _DaikinOutdoorTelemetry:
     fan_speed: float | None
     discharge_temperature: float | None
     target_discharge_temperature: float | None
+    defrost: bool | None
+    current: float | None
 
 
 class DaikinDeviceDataResponse(BaseModel):
@@ -324,6 +340,41 @@ def _number(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
+
+
+def _boolean(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _median(values: list[float | None]) -> float | None:
+    valid = [value for value in values if value is not None]
+    return median(valid) if valid else None
+
+
+def _heat_pump_operating_state(
+    members: list[_DaikinOutdoorTelemetry],
+    power_usage: float | None,
+    compressor_frequency: float | None,
+) -> DaikinHeatPumpOperatingState | None:
+    """Derive a useful group state without treating a stale direction as active."""
+    if not members:
+        return None
+    if any(member.defrost is True for member in members):
+        return DaikinHeatPumpOperatingState.DEFROSTING
+
+    running = (
+        compressor_frequency > 0 if compressor_frequency is not None else power_usage is not None and power_usage > 0
+    )
+    if not running:
+        return DaikinHeatPumpOperatingState.IDLE
+
+    heat_votes = sum(member.mode in (1, "1") for member in members)
+    cool_votes = sum(member.mode in (2, "2") for member in members)
+    if heat_votes > len(members) / 2:
+        return DaikinHeatPumpOperatingState.HEATING
+    if cool_votes > len(members) / 2:
+        return DaikinHeatPumpOperatingState.COOLING
+    return DaikinHeatPumpOperatingState.UNKNOWN
 
 
 def _map_outdoor_telemetry(payload: DaikinDeviceDataResponse) -> _DaikinOutdoorTelemetry | None:
@@ -362,6 +413,8 @@ def _map_outdoor_telemetry(payload: DaikinDeviceDataResponse) -> _DaikinOutdoorT
         fan_speed=_number(payload.data.get("oduFanMotorCurrentSpeed")),
         discharge_temperature=_number(payload.data.get("oduCompDischargeTemp")),
         target_discharge_temperature=_number(payload.data.get("oduCompTargetDischargeTemp")),
+        defrost=_boolean(payload.data.get("oduDefrost")),
+        current=_number(payload.data.get("oduConsumedCurrent")),
     )
 
 
@@ -687,7 +740,13 @@ class DaikinOne:
                 continue
 
             online_members = [member for member in members if member.online]
-            power_usage = median(member.power_usage for member in online_members) if online_members else None
+            power_usage = _median([member.power_usage for member in online_members])
+            outdoor_temperature = _median([member.outdoor_temperature for member in online_members])
+            compressor_frequency = _median([member.compressor_frequency for member in online_members])
+            outdoor_fan_speed = _median([member.fan_speed for member in online_members])
+            current = _median([member.current for member in online_members])
+            defrost_values = [member.defrost for member in online_members if member.defrost is not None]
+            defrost = any(defrost_values) if defrost_values else None
             energy_source = telemetry.get(group.energy_source_id)
             energy_consumption = (
                 energy_source.energy_consumption if energy_source is not None and energy_source.online else None
@@ -702,6 +761,12 @@ class DaikinOne:
                 energy_source_id=group.energy_source_id,
                 power_usage=power_usage,
                 energy_consumption=energy_consumption,
+                outdoor_temperature=outdoor_temperature,
+                operating_state=_heat_pump_operating_state(online_members, power_usage, compressor_frequency),
+                defrost=defrost,
+                compressor_frequency=compressor_frequency,
+                outdoor_fan_speed=outdoor_fan_speed,
+                current=current,
             )
             for member_id in group.thermostat_ids:
                 if member_id in self.__thermostats:

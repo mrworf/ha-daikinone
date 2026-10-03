@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     EntityCategory,
     UnitOfEnergy,
+    UnitOfFrequency,
     UnitOfTemperature,
     PERCENTAGE,
     UnitOfPower,
@@ -14,6 +15,7 @@ from homeassistant.const import (
     UnitOfPressure,
     UnitOfElectricCurrent,
     CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+    REVOLUTIONS_PER_MINUTE,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -31,6 +33,7 @@ from custom_components.daikinone.daikinone import (
     DaikinIndoorUnit,
     DaikinEquipment,
     DaikinHeatPump,
+    DaikinHeatPumpOperatingState,
     DaikinOutdoorUnit,
 )
 
@@ -76,6 +79,77 @@ async def async_setup_entry(
                 data=data,
                 device=heat_pump,
                 attribute=lambda heat_pump: heat_pump.energy_consumption,
+            ),
+            DaikinOneHeatPumpSensor(
+                description=SensorEntityDescription(
+                    key="outdoor_temperature",
+                    name="Outdoor Temperature",
+                    has_entity_name=True,
+                    state_class=SensorStateClass.MEASUREMENT,
+                    device_class=SensorDeviceClass.TEMPERATURE,
+                    native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+                    icon="mdi:thermometer",
+                ),
+                data=data,
+                device=heat_pump,
+                attribute=lambda heat_pump: heat_pump.outdoor_temperature,
+            ),
+            DaikinOneHeatPumpSensor(
+                description=SensorEntityDescription(
+                    key="operating_state",
+                    name="Operating State",
+                    has_entity_name=True,
+                    device_class=SensorDeviceClass.ENUM,
+                    options=[state.value for state in DaikinHeatPumpOperatingState],
+                    icon="mdi:heat-pump",
+                ),
+                data=data,
+                device=heat_pump,
+                attribute=lambda heat_pump: heat_pump.operating_state,
+            ),
+            DaikinOneHeatPumpSensor(
+                description=SensorEntityDescription(
+                    key="compressor_frequency",
+                    name="Compressor Frequency",
+                    has_entity_name=True,
+                    state_class=SensorStateClass.MEASUREMENT,
+                    device_class=SensorDeviceClass.FREQUENCY,
+                    native_unit_of_measurement=UnitOfFrequency.HERTZ,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                    icon="mdi:sine-wave",
+                ),
+                data=data,
+                device=heat_pump,
+                attribute=lambda heat_pump: heat_pump.compressor_frequency,
+            ),
+            DaikinOneHeatPumpSensor(
+                description=SensorEntityDescription(
+                    key="outdoor_fan_speed",
+                    name="Outdoor Fan Speed",
+                    has_entity_name=True,
+                    state_class=SensorStateClass.MEASUREMENT,
+                    native_unit_of_measurement=REVOLUTIONS_PER_MINUTE,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                    icon="mdi:fan",
+                ),
+                data=data,
+                device=heat_pump,
+                attribute=lambda heat_pump: heat_pump.outdoor_fan_speed,
+            ),
+            DaikinOneHeatPumpSensor(
+                description=SensorEntityDescription(
+                    key="current",
+                    name="Electrical Current",
+                    has_entity_name=True,
+                    state_class=SensorStateClass.MEASUREMENT,
+                    device_class=SensorDeviceClass.CURRENT,
+                    native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                    icon="mdi:current-ac",
+                ),
+                data=data,
+                device=heat_pump,
+                attribute=lambda heat_pump: heat_pump.current,
             ),
         ]
 
