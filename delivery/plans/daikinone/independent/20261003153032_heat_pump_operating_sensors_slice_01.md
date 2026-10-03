@@ -71,5 +71,5 @@ exact-SHA provenance closeout required by the delivery transaction contract.
 ## Completion
 
 - Status: complete.
-- Payload commit: pending.
+- Payload commit: `646eee53225298a14bd793151174455e931a57bf`.
 - Validation: 83 tests passed; Pyright, Ruff, per-file Black checks, JSON parsing, and Git whitespace checks passed.
