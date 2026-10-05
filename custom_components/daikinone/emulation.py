@@ -458,11 +458,14 @@ class DaikinEmulationController:
             if self._external_temperature is not None
             else thermostat.set_point_cool.celsius
         )
+        midpoint = (low + high) / 2
+        heat_stop = min(low + self.tolerance, midpoint)
+        cool_stop = max(high - self.tolerance, midpoint)
         if record.demand is Demand.HEAT:
-            if temperature >= low:
+            if temperature >= heat_stop:
                 record.demand = None
         elif record.demand is Demand.COOL:
-            if temperature <= high:
+            if temperature <= cool_stop:
                 record.demand = None
         elif temperature <= low - self.tolerance:
             record.demand = Demand.HEAT

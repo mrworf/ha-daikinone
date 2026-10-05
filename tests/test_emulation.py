@@ -128,7 +128,7 @@ def restore_heat_cool(controller: DaikinEmulationController, daikin: FakeDaikin,
         controller.restore(thermostat_id, HVACMode.HEAT_COOL, daikin.devices[thermostat_id].mode)
 
 
-def test_hysteresis_starts_heat_and_stops_at_low_target() -> None:
+def test_hysteresis_starts_heat_and_stops_inside_range() -> None:
     device = head("living", 18)
     controller, daikin = make_controller(
         [device], options={CONF_OPTION_EMULATION_TOLERANCE: 0.5, CONF_OPTION_EMULATION_DWELL_MINUTES: 0}
@@ -141,15 +141,91 @@ def test_hysteresis_starts_heat_and_stops_at_low_target() -> None:
 
     daikin.devices["living"].indoor_temperature = Temperature.from_celsius(19)
     asyncio.run(controller.async_reconcile())
+    assert daikin.devices["living"].mode is DaikinThermostatMode.HEAT
+
+    daikin.devices["living"].indoor_temperature = Temperature.from_celsius(19.5)
+    asyncio.run(controller.async_reconcile())
     assert daikin.commands[-1] == ("living", DaikinThermostatMode.OFF)
     assert controller.status("living") is EmulationStatus.IDLE
 
 
+def test_hysteresis_starts_cooling_and_stops_inside_range() -> None:
+    device = head("living", 26)
+    controller, daikin = make_controller(
+        [device], options={CONF_OPTION_EMULATION_TOLERANCE: 0.5, CONF_OPTION_EMULATION_DWELL_MINUTES: 0}
+    )
+    restore_heat_cool(controller, daikin, "living")
+
+    asyncio.run(controller.async_reconcile())
+    assert daikin.commands == [("living", DaikinThermostatMode.COOL)]
+
+    daikin.devices["living"].indoor_temperature = Temperature.from_celsius(25)
+    asyncio.run(controller.async_reconcile())
+    assert daikin.devices["living"].mode is DaikinThermostatMode.COOL
+
+    daikin.devices["living"].indoor_temperature = Temperature.from_celsius(24.5)
+    asyncio.run(controller.async_reconcile())
+    assert daikin.commands[-1] == ("living", DaikinThermostatMode.OFF)
+    assert controller.status("living") is EmulationStatus.IDLE
+
+
+@pytest.mark.parametrize(
+    ("start_temperature", "start_mode", "near_midpoint", "stop_temperature"),
+    [
+        (17.5, DaikinThermostatMode.HEAT, 19.4, 19.5),
+        (21.5, DaikinThermostatMode.COOL, 19.6, 19.5),
+    ],
+)
+def test_narrow_range_caps_stop_threshold_at_midpoint(
+    start_temperature: float,
+    start_mode: DaikinThermostatMode,
+    near_midpoint: float,
+    stop_temperature: float,
+) -> None:
+    device = replace(
+        head("living", start_temperature),
+        set_point_heat=Temperature.from_celsius(19),
+        set_point_cool=Temperature.from_celsius(20),
+    )
+    controller, daikin = make_controller(
+        [device], options={CONF_OPTION_EMULATION_TOLERANCE: 1.0, CONF_OPTION_EMULATION_DWELL_MINUTES: 0}
+    )
+    restore_heat_cool(controller, daikin, "living")
+
+    asyncio.run(controller.async_reconcile())
+    assert daikin.devices["living"].mode is start_mode
+
+    daikin.devices["living"].indoor_temperature = Temperature.from_celsius(near_midpoint)
+    asyncio.run(controller.async_reconcile())
+    assert daikin.devices["living"].mode is start_mode
+
+    daikin.devices["living"].indoor_temperature = Temperature.from_celsius(stop_temperature)
+    asyncio.run(controller.async_reconcile())
+    assert daikin.devices["living"].mode is DaikinThermostatMode.OFF
+
+
+def test_zero_tolerance_preserves_boundary_stop() -> None:
+    device = head("living", 18)
+    controller, daikin = make_controller(
+        [device], options={CONF_OPTION_EMULATION_TOLERANCE: 0, CONF_OPTION_EMULATION_DWELL_MINUTES: 0}
+    )
+    restore_heat_cool(controller, daikin, "living")
+
+    asyncio.run(controller.async_reconcile())
+    assert daikin.devices["living"].mode is DaikinThermostatMode.HEAT
+
+    daikin.devices["living"].indoor_temperature = Temperature.from_celsius(19)
+    asyncio.run(controller.async_reconcile())
+    assert daikin.devices["living"].mode is DaikinThermostatMode.OFF
+
+
 def test_emulated_heat_cool_uses_external_temperature_and_logical_range() -> None:
     class ExternalTemperature:
+        temperature = 26.0
+
         def effective_temperature(self, device: DaikinThermostat) -> float:
             del device
-            return 26
+            return self.temperature
 
         def logical_heat(self, device: DaikinThermostat) -> float:
             del device
@@ -159,11 +235,12 @@ def test_emulated_heat_cool_uses_external_temperature_and_logical_range() -> Non
             del device
             return 24
 
+    external = ExternalTemperature()
     device = head("living", 21)
     controller, daikin = make_controller(
         [device],
-        options={CONF_OPTION_EMULATION_DWELL_MINUTES: 0},
-        external_temperature=ExternalTemperature(),
+        options={CONF_OPTION_EMULATION_TOLERANCE: 0.5, CONF_OPTION_EMULATION_DWELL_MINUTES: 0},
+        external_temperature=external,
     )
     restore_heat_cool(controller, daikin, "living")
 
@@ -171,6 +248,15 @@ def test_emulated_heat_cool_uses_external_temperature_and_logical_range() -> Non
 
     assert daikin.commands == [("living", DaikinThermostatMode.COOL)]
     assert controller.status("living") is EmulationStatus.COOLING
+
+    external.temperature = 24
+    asyncio.run(controller.async_reconcile())
+    assert daikin.devices["living"].mode is DaikinThermostatMode.COOL
+
+    external.temperature = 23.5
+    asyncio.run(controller.async_reconcile())
+    assert daikin.devices["living"].mode is DaikinThermostatMode.OFF
+    assert controller.status("living") is EmulationStatus.IDLE
 
 
 def test_largest_deviation_selects_one_group_direction() -> None:

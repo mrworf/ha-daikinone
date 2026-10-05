@@ -49,8 +49,9 @@ You can move between the pages without losing your work. Nothing is saved until 
   heads. A head can be in only one group. All heads in a group must be in the same Daikin location. The integration
   chooses the best head to supply the group's energy reading.
 - **Emulated Heat/Cool settings** has three settings that apply to all heads:
-  - **Temperature tolerance** says how far the room may move past a target before heating or cooling starts. You can
-    choose 0–5 °C. The default is 0.5 °C.
+  - **Temperature tolerance** says how far the room must move past a target before heating or cooling starts. Once
+    running, the head continues the same distance inside the selected range before stopping. You can choose 0–5 °C.
+    The default is 0.5 °C.
   - **Minimum direction time** says how long a shared outdoor unit must wait before changing from heating to cooling,
     or from cooling to heating. You can choose 0–120 minutes. The default is 15 minutes.
   - **Convert external Daikin Auto to emulated Heat/Cool** controls what happens when you choose Auto in the Daikin
@@ -105,6 +106,10 @@ heat pump. It is not shown on normal mini-split heads.
 All heads on one outdoor heat pump must heat or cool together. If different rooms ask for different things, the room
 that is furthest from its target chooses the direction. The temperature tolerance and wait time help stop the system
 from changing direction too often.
+
+For example, with a 20–24 °C range and a 0.5 °C tolerance, heating starts at 19.5 °C and stops at 20.5 °C.
+Cooling starts at 24.5 °C and stops at 23.5 °C. If the range is very narrow, a head stops at the middle of the range
+rather than crossing into the other mode's side.
 
 Choosing Heat, Cool, Auto, or Off by hand takes control away from Heat/Cool mode. This includes choices made with a
 Daikin remote or app. You may turn on **Convert external Daikin Auto to emulated Heat/Cool** if you want an Auto
