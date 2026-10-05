@@ -23,5 +23,5 @@ avoids stopping as soon as the room first touches a boundary.
 ## Transaction
 
 - Parent commit: `dfb2e37e15bcb869b817b12b79446097592b112f`.
-- Payload commit: pending.
+- Payload commit: `c972b205e45a47cf725a717821f4354991f89484`.
 - Slice status: complete.

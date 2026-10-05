@@ -66,6 +66,6 @@ provenance closeout required by the delivery transaction contract.
 ## Completion
 
 - Status: complete.
-- Payload commit: pending.
+- Payload commit: `c972b205e45a47cf725a717821f4354991f89484`.
 - Validation: 87 tests passed; Pyright reported 0 errors; Ruff, Black, bytecode compilation, JSON parsing, and Git
   whitespace checks passed.
