@@ -22,5 +22,5 @@ unavailable readings must be reported as unavailable rather than as zero.
 ## Transaction
 
 - Parent commit: `31db30ae609aa9924b8898d43bd35c9730bb2b32`.
-- Payload commit: pending.
+- Payload commit: `b2fd541d5dd2ac5c346ada6b059cc38cf87f37a0`.
 - Slice status: complete.

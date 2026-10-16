@@ -71,6 +71,6 @@ only by the exact-SHA provenance closeout required by the delivery transaction c
 ## Completion
 
 - Status: complete.
-- Payload commit: pending.
+- Payload commit: `b2fd541d5dd2ac5c346ada6b059cc38cf87f37a0`.
 - Validation: 90 tests passed; Pyright reported 0 errors; Ruff, Black, bytecode compilation, JSON parsing, and Git
   whitespace checks passed.
