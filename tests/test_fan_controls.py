@@ -139,6 +139,24 @@ def test_mapper_only_advertises_emergency_heat_when_reported(extra: dict[str, An
     assert DaikinThermostatCapability.COOL in mapped.capabilities
 
 
+def test_mapper_uses_new_humidity_field_and_keeps_legacy_fallback() -> None:
+    connector = DaikinOne(DaikinUserCredentials("user@example.invalid", "unused"))
+
+    current = map_thermostat(
+        connector,
+        payload("current", {"iduRoomHum": 42, "humIndoor": 41, "oduOutdoorTemp": None}),
+    )
+    legacy = map_thermostat(connector, payload("legacy", {"humIndoor": 39, "oduOutdoorTemp": 12.5}))
+    invalid = map_thermostat(connector, payload("invalid", {"iduRoomHum": 101}))
+
+    assert current.indoor_humidity == 42
+    assert current.outdoor_temperature is None
+    assert legacy.indoor_humidity == 39
+    assert legacy.outdoor_temperature is not None
+    assert legacy.outdoor_temperature.celsius == 12.5
+    assert invalid.indoor_humidity is None
+
+
 def test_select_setup_gates_circulation_controls_and_removes_stale_entity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

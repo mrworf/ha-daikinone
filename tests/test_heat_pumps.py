@@ -210,6 +210,70 @@ def test_persisted_groups_do_not_regroup_when_telemetry_changes() -> None:
     }
 
 
+def test_nullable_outdoor_telemetry_keeps_configured_heat_pump_and_valid_energy() -> None:
+    payload = _payload(
+        "head",
+        "Bedroom",
+        1,
+        606.8,
+        0,
+        frequency=0,
+        fan_speed=0,
+        discharge=20,
+        outdoor_temperature=10,
+    )
+    payload["data"].update(
+        {
+            "iduRoomTemp": 27,
+            "iduRoomHum": 30,
+            "oduConnectedIduUnitNumber": None,
+            "oduConsumedPower": None,
+            "oduConsumedCurrent": None,
+            "oduCompCurrentFrequency": None,
+            "oduCompDischargeTemp": None,
+            "oduCompTargetDischargeTemp": None,
+            "oduFanMotorCurrentSpeed": None,
+            "oduOutdoorTemp": None,
+            "oduOperatingMode": None,
+            "oduDefrost": False,
+        }
+    )
+    connector = _connector([payload], [_group("head")])
+
+    asyncio.run(connector.update())
+
+    thermostat = connector.get_thermostat("head")
+    assert thermostat.indoor_temperature.celsius == 27
+    assert thermostat.indoor_temperature_valid is True
+    assert thermostat.indoor_humidity == 30
+    assert thermostat.outdoor_temperature is None
+    assert thermostat.outdoor_humidity is None
+    assert thermostat.heat_pump_id == "heat-pump"
+    assert connector.get_heat_pump_candidate_ids() == {"head"}
+
+    heat_pump = connector.get_heat_pump("heat-pump")
+    assert heat_pump.energy_consumption == 606.8
+    assert heat_pump.power_usage is None
+    assert heat_pump.outdoor_temperature is None
+    assert heat_pump.operating_state is None
+    assert heat_pump.defrost is False
+    assert heat_pump.compressor_frequency is None
+    assert heat_pump.outdoor_fan_speed is None
+    assert heat_pump.current is None
+
+
+def test_configured_heat_pump_remains_when_no_member_payload_is_available() -> None:
+    connector = _connector([], [_group("head")])
+
+    asyncio.run(connector.update())
+
+    heat_pump = connector.get_heat_pump("heat-pump")
+    assert heat_pump.thermostat_ids == ("head",)
+    assert heat_pump.power_usage is None
+    assert heat_pump.energy_consumption is None
+    assert heat_pump.operating_state is None
+
+
 @pytest.mark.parametrize(
     ("power", "frequency", "outdoor_mode", "defrost", "expected"),
     [
@@ -417,9 +481,29 @@ def test_missing_or_legacy_outdoor_data_is_not_discovered() -> None:
         outdoor_temperature=1,
         extra={"ctOutdoorUnitType": 1},
     )
+    nullable = _payload("nullable", "Nullable", 1, 1, 1, frequency=1, fan_speed=1, discharge=1, outdoor_temperature=1)
+    for field in (
+        "oduConnectedIduUnitNumber",
+        "oduConsumedPower",
+        "oduOperatingMode",
+        "oduOutdoorTemp",
+    ):
+        nullable["data"][field] = None
+    no_outdoor_unit = _payload(
+        "no-odu", "No Outdoor Unit", 1, 1, 1, frequency=1, fan_speed=1, discharge=1, outdoor_temperature=1
+    )
+    no_outdoor_unit["data"] = {
+        field: value for field, value in no_outdoor_unit["data"].items() if not field.startswith("odu")
+    }
 
-    responses = [DaikinDeviceDataResponse(**payload) for payload in (missing, legacy)]
+    responses = [DaikinDeviceDataResponse(**payload) for payload in (missing, legacy, nullable, no_outdoor_unit)]
     assert discover_heat_pump_groups(responses) == []
+
+    connector = _connector([nullable, no_outdoor_unit])
+    asyncio.run(connector.update())
+    assert connector.get_heat_pump_candidate_ids() == {"nullable"}
+    assert connector.get_unassigned_heat_pump_thermostat_ids() == {"nullable"}
+    assert connector.get_heat_pumps() == {}
 
 
 def test_energy_source_offline_does_not_switch_counters() -> None:
@@ -483,9 +567,7 @@ def test_heat_pump_sensor_metadata() -> None:
     assert energy.state_class is SensorStateClass.TOTAL_INCREASING
     assert energy.native_unit_of_measurement == UnitOfEnergy.KILO_WATT_HOUR
 
-    outdoor_temperature = next(
-        entity for entity in entities if entity.entity_description.key == "outdoor_temperature"
-    )
+    outdoor_temperature = next(entity for entity in entities if entity.entity_description.key == "outdoor_temperature")
     assert outdoor_temperature.device_class is SensorDeviceClass.TEMPERATURE
     assert outdoor_temperature.native_unit_of_measurement == UnitOfTemperature.CELSIUS
     assert outdoor_temperature.entity_category is None

@@ -245,7 +245,7 @@ class DaikinThermostat(DaikinDevice):
     circulation_speed_supported: bool
     schedule: DaikinThermostatSchedule
     indoor_temperature: Temperature
-    indoor_humidity: int
+    indoor_humidity: int | None
     set_point_heat: Temperature
     set_point_heat_min: Temperature
     set_point_heat_max: Temperature
@@ -255,8 +255,8 @@ class DaikinThermostat(DaikinDevice):
     set_point_auto: Temperature
     set_point_auto_min: Temperature
     set_point_auto_max: Temperature
-    outdoor_temperature: Temperature
-    outdoor_humidity: int
+    outdoor_temperature: Temperature | None
+    outdoor_humidity: int | None
     air_quality_outdoor: DaikinOneAirQualitySensorOutdoor | None
     air_quality_indoor: DaikinOneAirQualitySensorIndoor | None
     equipment: dict[str, DaikinEquipment]
@@ -313,11 +313,11 @@ class _DaikinOutdoorTelemetry:
     thermostat_id: str
     location_id: str
     online: bool
-    connected_indoor_units: int
-    power_usage: float
-    energy_consumption: float
-    mode: int | str
-    outdoor_temperature: float
+    connected_indoor_units: int | None
+    power_usage: float | None
+    energy_consumption: float | None
+    mode: int | str | None
+    outdoor_temperature: float | None
     compressor_frequency: float | None
     fan_speed: float | None
     discharge_temperature: float | None
@@ -362,6 +362,9 @@ def _heat_pump_operating_state(
     if any(member.defrost is True for member in members):
         return DaikinHeatPumpOperatingState.DEFROSTING
 
+    if compressor_frequency is None and power_usage is None:
+        return None
+
     running = (
         compressor_frequency > 0 if compressor_frequency is not None else power_usage is not None and power_usage > 0
     )
@@ -378,8 +381,8 @@ def _heat_pump_operating_state(
 
 
 def _map_outdoor_telemetry(payload: DaikinDeviceDataResponse) -> _DaikinOutdoorTelemetry | None:
-    """Map mini-split outdoor telemetry, excluding legacy communicating equipment."""
-    if "ctOutdoorUnitType" in payload.data:
+    """Map available mini-split outdoor telemetry, excluding legacy communicating equipment."""
+    if "ctOutdoorUnitType" in payload.data or not any(field.startswith("odu") for field in payload.data):
         return None
 
     connected = _number(payload.data.get("oduConnectedIduUnitNumber"))
@@ -387,24 +390,20 @@ def _map_outdoor_telemetry(payload: DaikinDeviceDataResponse) -> _DaikinOutdoorT
     energy = _number(payload.data.get("oduIntPowerConsumption"))
     outdoor_temperature = _number(payload.data.get("oduOutdoorTemp"))
     mode = payload.data.get("oduOperatingMode")
-    if (
-        connected is None
-        or connected < 1
-        or power is None
-        or power < 0
-        or energy is None
-        or energy < 0
-        or outdoor_temperature is None
-        or not isinstance(mode, (int, str))
-        or isinstance(mode, bool)
-    ):
-        return None
+    if connected is not None and connected < 1:
+        connected = None
+    if power is not None and power < 0:
+        power = None
+    if energy is not None and energy < 0:
+        energy = None
+    if not isinstance(mode, (int, str)) or isinstance(mode, bool):
+        mode = None
 
     return _DaikinOutdoorTelemetry(
         thermostat_id=payload.id,
         location_id=payload.locationId,
         online=payload.online,
-        connected_indoor_units=int(connected),
+        connected_indoor_units=int(connected) if connected is not None else None,
         power_usage=power,
         energy_consumption=energy,
         mode=mode,
@@ -419,13 +418,30 @@ def _map_outdoor_telemetry(payload: DaikinDeviceDataResponse) -> _DaikinOutdoorT
 
 
 def _outdoor_telemetry_compatible(left: _DaikinOutdoorTelemetry, right: _DaikinOutdoorTelemetry) -> bool:
-    if left.location_id != right.location_id or left.connected_indoor_units != right.connected_indoor_units:
+    left_connected = left.connected_indoor_units
+    right_connected = right.connected_indoor_units
+    left_energy = left.energy_consumption
+    right_energy = right.energy_consumption
+    left_temperature = left.outdoor_temperature
+    right_temperature = right.outdoor_temperature
+    if (
+        left_connected is None
+        or right_connected is None
+        or left_energy is None
+        or right_energy is None
+        or left.mode is None
+        or right.mode is None
+        or left_temperature is None
+        or right_temperature is None
+    ):
+        return False
+    if left.location_id != right.location_id or left_connected != right_connected:
         return False
 
-    energy_tolerance = max(25.0, max(left.energy_consumption, right.energy_consumption) * 0.05)
-    if abs(left.energy_consumption - right.energy_consumption) > energy_tolerance:
+    energy_tolerance = max(25.0, max(left_energy, right_energy) * 0.05)
+    if abs(left_energy - right_energy) > energy_tolerance:
         return False
-    if left.mode != right.mode or abs(left.outdoor_temperature - right.outdoor_temperature) > 2.0:
+    if left.mode != right.mode or abs(left_temperature - right_temperature) > 2.0:
         return False
 
     signals = (
@@ -445,11 +461,21 @@ def _outdoor_telemetry_compatible(left: _DaikinOutdoorTelemetry, right: _DaikinO
 def discover_heat_pump_groups(payloads: list[DaikinDeviceDataResponse]) -> list[DaikinHeatPumpGroup]:
     """Discover conservative, stable initial groupings from a single API snapshot."""
     telemetry = [
-        mapped for payload in payloads if (mapped := _map_outdoor_telemetry(payload)) is not None and mapped.online
+        mapped
+        for payload in payloads
+        if (mapped := _map_outdoor_telemetry(payload)) is not None
+        and mapped.online
+        and mapped.connected_indoor_units is not None
+        and mapped.power_usage is not None
+        and mapped.energy_consumption is not None
+        and mapped.mode is not None
+        and mapped.outdoor_temperature is not None
     ]
     partitions: dict[tuple[str, int], list[_DaikinOutdoorTelemetry]] = {}
     for item in telemetry:
-        partitions.setdefault((item.location_id, item.connected_indoor_units), []).append(item)
+        connected = item.connected_indoor_units
+        if connected is not None:
+            partitions.setdefault((item.location_id, connected), []).append(item)
 
     components: list[tuple[list[_DaikinOutdoorTelemetry], int]] = []
     for candidates in partitions.values():
@@ -468,12 +494,13 @@ def discover_heat_pump_groups(payloads: list[DaikinDeviceDataResponse]) -> list[
 
     groups: list[DaikinHeatPumpGroup] = []
     for component, partition_size in components:
-        if len(component) == 1 and partition_size > 1 and component[0].connected_indoor_units > 1:
+        connected = component[0].connected_indoor_units
+        if len(component) == 1 and partition_size > 1 and connected is not None and connected > 1:
             continue
         member_ids = tuple(sorted(item.thermostat_id for item in component))
         location_id = component[0].location_id
         group_seed = f"daikinone:{location_id}:{','.join(member_ids)}"
-        energy_source = max(component, key=lambda item: item.energy_consumption).thermostat_id
+        energy_source = max(component, key=lambda item: item.energy_consumption or 0).thermostat_id
         groups.append(
             DaikinHeatPumpGroup(
                 id=f"heat-pump-{uuid5(NAMESPACE_URL, group_seed)}",
@@ -564,10 +591,14 @@ class DaikinOne:
         return self.get_heat_pump_candidate_ids() - assigned
 
     def select_heat_pump_energy_source(self, thermostat_ids: set[str]) -> str:
-        candidates = [self.__outdoor_telemetry[item] for item in thermostat_ids if item in self.__outdoor_telemetry]
+        candidates = [
+            self.__outdoor_telemetry[item]
+            for item in thermostat_ids
+            if item in self.__outdoor_telemetry and self.__outdoor_telemetry[item].energy_consumption is not None
+        ]
         if not candidates:
-            raise ValueError("Heat-pump group has no supported head units")
-        return max(candidates, key=lambda item: item.energy_consumption).thermostat_id
+            raise ValueError("Heat-pump group has no head with an available energy reading")
+        return max(candidates, key=lambda item: item.energy_consumption or 0).thermostat_id
 
     @property
     def heat_pump_groups_inferred(self) -> bool:
@@ -736,9 +767,6 @@ class DaikinOne:
         heat_pumps: dict[str, DaikinHeatPump] = {}
         for group in self.__heat_pump_groups or []:
             members = [telemetry[member_id] for member_id in group.thermostat_ids if member_id in telemetry]
-            if not members:
-                continue
-
             online_members = [member for member in members if member.online]
             power_usage = _median([member.power_usage for member in online_members])
             outdoor_temperature = _median([member.outdoor_temperature for member in online_members])
@@ -806,6 +834,19 @@ class DaikinOne:
                     payload.id,
                 )
                 return None
+
+            def optional_number(*fields: str) -> float | None:
+                for field in fields:
+                    if (value := _number(payload.data.get(field))) is not None:
+                        return value
+                return None
+
+            def optional_humidity(*fields: str) -> int | None:
+                value = optional_number(*fields)
+                return round(value) if value is not None and 0 <= value <= 100 else None
+
+            indoor_temperature = optional_number("iduRoomTemp")
+            outdoor_temperature = optional_number("oduOutdoorTemp")
 
             capabilities: set[DaikinThermostatCapability] = set()
             if payload.data.get("ctSystemCapHeat") or payload.data.get("iduHeatSetpoint"):
@@ -904,8 +945,8 @@ class DaikinOne:
                 circulation_speed=optional_enum("fanCirculateSpeed", DaikinThermostatCirculationSpeed),
                 circulation_speed_supported="fanCirculateSpeed" in payload.data,
                 schedule=DaikinThermostatSchedule(enabled=payload.data.get("schedEnabled", False)),
-                indoor_temperature=Temperature.from_celsius(payload.data.get("iduRoomTemp", 0)),  # old: tempIndoor
-                indoor_humidity=payload.data.get("humIndoor", 0),
+                indoor_temperature=Temperature.from_celsius(indoor_temperature or 0),  # old: tempIndoor
+                indoor_humidity=optional_humidity("iduRoomHum", "humIndoor"),
                 set_point_heat=Temperature.from_celsius(payload.data.get("iduHeatSetpoint", 0)),  # old: hspActive
                 set_point_heat_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 10)),
                 set_point_heat_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxHeatSetpoint", 30)),
@@ -915,12 +956,14 @@ class DaikinOne:
                 set_point_auto=Temperature.from_celsius(payload.data.get("iduAutoSetpoint", 0)),  # old: hspActive
                 set_point_auto_min=Temperature.from_celsius(payload.data.get("EquipProtocolMinHeatSetpoint", 18)),
                 set_point_auto_max=Temperature.from_celsius(payload.data.get("EquipProtocolMaxHeatSetpoint", 30)),
-                outdoor_temperature=Temperature.from_celsius(payload.data.get("oduOutdoorTemp", 0)),  # old: tempOutdoor
-                outdoor_humidity=payload.data.get("humOutdoor", 0),
+                outdoor_temperature=(
+                    Temperature.from_celsius(outdoor_temperature) if outdoor_temperature is not None else None
+                ),  # old: tempOutdoor
+                outdoor_humidity=optional_humidity("humOutdoor"),
                 air_quality_outdoor=self.__map_air_quality_outdoor(payload),
                 air_quality_indoor=self.__map_air_quality_indoor(payload),
                 equipment=self.__map_equipment(payload),
-                indoor_temperature_valid="iduRoomTemp" in payload.data,
+                indoor_temperature_valid=indoor_temperature is not None,
             )
         except Exception as e:
             # Improve logging when Daikin changes payload
