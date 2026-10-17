@@ -24,6 +24,7 @@ from homeassistant.helpers.typing import StateType
 from custom_components.daikinone import DOMAIN, DaikinOneData
 from custom_components.daikinone.const import CONF_OPTION_ENTITY_UID_SCHEMA_VERSION_KEY
 from custom_components.daikinone.entity import DaikinOneEntity
+from custom_components.daikinone.error_codes import error_description
 from custom_components.daikinone.daikinone import (
     DaikinDevice,
     DaikinEEVCoil,
@@ -197,6 +198,30 @@ async def async_setup_entry(
                 data=data,
                 device=thermostat,
                 attribute=lambda d: d.indoor_humidity,
+            ),
+            DaikinOneThermostatSensor(
+                description=SensorEntityDescription(
+                    key="error_code",
+                    name="Error Code",
+                    has_entity_name=True,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                    icon="mdi:alert-circle-outline",
+                ),
+                data=data,
+                device=thermostat,
+                attribute=lambda d: d.error_code or "",
+            ),
+            DaikinOneThermostatSensor(
+                description=SensorEntityDescription(
+                    key="error_description",
+                    name="Error Description",
+                    has_entity_name=True,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                    icon="mdi:alert-circle-outline",
+                ),
+                data=data,
+                device=thermostat,
+                attribute=lambda d: error_description(d.error_code) or "",
             ),
         ]
 

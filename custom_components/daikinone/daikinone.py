@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from pydantic.dataclasses import dataclass
 
 from .exceptions import DaikinServiceException
+from custom_components.daikinone.error_codes import normalize_error_code
 from custom_components.daikinone.utils import Temperature
 
 log = logging.getLogger(__name__)
@@ -262,6 +263,7 @@ class DaikinThermostat(DaikinDevice):
     equipment: dict[str, DaikinEquipment]
     indoor_temperature_valid: bool = True
     heat_pump_id: str | None = None
+    error_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -964,6 +966,7 @@ class DaikinOne:
                 air_quality_indoor=self.__map_air_quality_indoor(payload),
                 equipment=self.__map_equipment(payload),
                 indoor_temperature_valid=indoor_temperature is not None,
+                error_code=normalize_error_code(payload.data.get("iduErrorCode")),
             )
         except Exception as e:
             # Improve logging when Daikin changes payload

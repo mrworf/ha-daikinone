@@ -165,6 +165,11 @@ support this control.
 
 ### Diagnostics
 
+Each indoor head has an **Equipment Problem** sensor. It changes to **Problem** when Daikin reports a fault and goes
+back to **OK** when the fault clears. The same device also has **Error Code** and **Error Description** diagnostic
+sensors. They are blank when there is no fault. The description comes from Daikin's residential error-code chart;
+an unfamiliar code stays visible and is labeled as unknown instead of being hidden.
+
 Use **Download diagnostics** on the Daikin One integration page or on a device page. This file gives a support person
 details about your Daikin system and this integration.
 
